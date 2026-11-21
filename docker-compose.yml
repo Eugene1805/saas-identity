@@ -1,0 +1,51 @@
+services:
+  identity-db:
+    image: postgres:17-alpine
+    container_name: vital-identity-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vital_identity}
+      POSTGRES_USER: ${POSTGRES_USER:-vital_identity}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vital_identity_dev_pass}
+    ports:
+      - "5433:5432"
+    volumes:
+      - identity_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vital_identity} -d ${POSTGRES_DB:-vital_identity}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  identity-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vital-identity-api
+    depends_on:
+      identity-db:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__IdentityDb: Host=identity-db;Port=5432;Database=${POSTGRES_DB:-vital_identity};Username=${POSTGRES_USER:-vital_identity};Password=${POSTGRES_PASSWORD:-vital_identity_dev_pass}
+      Jwt__Issuer: saas-identity
+      Jwt__Audience: vital-saas
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:-VitalIdentityDevSigningKeyChangeInProd2026!}
+      Jwt__AccessTokenMinutes: 15
+      Jwt__RefreshTokenDays: 7
+      Ports__Http: 8080
+      Ports__Grpc: 8082
+      InternalGrpc__ApiKey: ${INTERNAL_GRPC_API_KEY:-VitalInternalGrpcDevKey2026!}
+      Email__Mode: ${EMAIL_MODE:-LogOnly}
+      Email__FromAddress: ${EMAIL_FROM_ADDRESS:-no-reply@vital.demo}
+      Platform__Mode: ${PLATFORM_MODE:-Local}
+      Platform__GrpcAddress: ${PLATFORM_GRPC_ADDRESS:-http://platform-api:8092}
+      Platform__InternalServiceKey: ${INTERNAL_GRPC_API_KEY:-VitalInternalGrpcDevKey2026!}
+      Platform__TimeoutSeconds: 3
+      SeedDemoData: ${SEED_DEMO_DATA:-true}
+      OpenApi__Enabled: ${OPENAPI_ENABLED:-true}
+    ports:
+      - "8081:8080"
+      - "5082:8082"
+
+volumes:
+  identity_pgdata:
