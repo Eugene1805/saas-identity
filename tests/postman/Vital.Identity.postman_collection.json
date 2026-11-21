@@ -1,0 +1,931 @@
+{
+  "info": {
+    "name": "Vital - saas-identity (Incremento 1)",
+    "description": "Pruebas automatizadas de autenticación multitenant CU-13, JWT Bearer, rotación y revocación de Refresh Tokens en PostgreSQL.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01. Health check y PostgreSQL",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Health retorna 200 Healthy con DB conectada', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.status).to.eql('Healthy');",
+              "  pm.expect(body.database).to.eql('Connected');",
+              "  pm.expect(body.timestampGmt6).to.include('-06:00');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      }
+    },
+    {
+      "name": "02. Documento OpenAPI v1 disponible",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('OpenAPI v1 JSON válido y documenta rutas auth', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const spec = pm.response.json();",
+              "  pm.expect(spec.paths).to.have.property('/v1/auth/login');",
+              "  pm.expect(spec.paths).to.have.property('/v1/auth/platform/login');",
+              "  pm.expect(spec.paths).to.have.property('/v1/auth/refresh');",
+              "  pm.expect(spec.paths).to.have.property('/v1/auth/logout');",
+              "  pm.expect(spec.paths).to.have.property('/v1/auth/me');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/openapi/v1.json"
+      }
+    },
+    {
+      "name": "03. CU-13 A3: Clínica SUSPENDIDA rechazada (403)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Clínica suspendida devuelve 403 TENANT_SUSPENDED', () => {",
+              "  pm.response.to.have.status(403);",
+              "  pm.expect(pm.response.json().code).to.eql('TENANT_SUSPENDED');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"clinicSlug\": \"clinica-valle\",\n  \"email\": \"admin@valle.vital.demo\",\n  \"password\": \"Vital2026!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/login"
+      }
+    },
+    {
+      "name": "04. CU-13 A3: Clínica PENDIENTE_ADMIN rechazada (403)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Clínica pendiente devuelve 403 TENANT_PENDING_ADMIN', () => {",
+              "  pm.response.to.have.status(403);",
+              "  pm.expect(pm.response.json().code).to.eql('TENANT_PENDING_ADMIN');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"clinicSlug\": \"clinica-aurora\",\n  \"email\": \"admin@aurora.vital.demo\",\n  \"password\": \"Vital2026!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/login"
+      }
+    },
+    {
+      "name": "05. CU-13 A2: Cuenta de otra clínica en clinica-norte rechazada (401)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Aislamiento multitenant devuelve 401 INVALID_CREDENTIALS sin filtrar existencia', () => {",
+              "  pm.response.to.have.status(401);",
+              "  pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"clinicSlug\": \"clinica-norte\",\n  \"email\": \"dra.mendoza@valle.vital.demo\",\n  \"password\": \"Vital2026!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/login"
+      }
+    },
+    {
+      "name": "06. CU-13 A3: Cuenta desactivada rechazada (403)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Cuenta desactivada devuelve 403 ACCOUNT_DISABLED', () => {",
+              "  pm.response.to.have.status(403);",
+              "  pm.expect(pm.response.json().code).to.eql('ACCOUNT_DISABLED');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"clinicSlug\": \"clinica-norte\",\n  \"email\": \"dr.vega@norte.vital.demo\",\n  \"password\": \"Vital2026!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/login"
+      }
+    },
+    {
+      "name": "07. GET /v1/auth/me sin Bearer devuelve 401",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Endpoint protegido rechaza peticiones anónimas con 401', () => {",
+              "  pm.response.to.have.status(401);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/auth/me"
+      }
+    },
+    {
+      "name": "08. CU-13: Login válido Dra. Mendoza en clinica-norte",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Login válido emite JWT Bearer, Refresh Token y fechas GMT-6', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.tokenType).to.eql('Bearer');",
+              "  pm.expect(body.accessToken).to.be.a('string').and.not.empty;",
+              "  pm.expect(body.refreshToken).to.be.a('string').and.not.empty;",
+              "  pm.expect(body.accessTokenExpiresAtGmt6).to.include('-06:00');",
+              "  pm.expect(body.account.role).to.eql('ESPECIALISTA');",
+              "  pm.expect(body.tenant.slug).to.eql('clinica-norte');",
+              "  pm.collectionVariables.set('accessToken', body.accessToken);",
+              "  pm.collectionVariables.set('refreshToken1', body.refreshToken);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"clinicSlug\": \"clinica-norte\",\n  \"email\": \"dra.mendoza@norte.vital.demo\",\n  \"password\": \"Vital2026!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/login"
+      }
+    },
+    {
+      "name": "09. GET /v1/auth/me con JWT devuelve perfil completo",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Perfil autenticado incluye atribución y permisos', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const profile = pm.response.json();",
+              "  pm.expect(profile.email).to.eql('dra.mendoza@norte.vital.demo');",
+              "  pm.expect(profile.permissions.canPrescribe).to.eql(true);",
+              "  pm.expect(profile.professionalAttribution.licenseCode).to.eql('CED-FICT-4012');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "url": "{{baseUrl}}/v1/auth/me"
+      }
+    },
+    {
+      "name": "10. POST /v1/auth/refresh rota token",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Refresh entrega un nuevo par de tokens', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.refreshToken).to.be.a('string').and.not.eql(pm.collectionVariables.get('refreshToken1'));",
+              "  pm.collectionVariables.set('refreshToken2', body.refreshToken);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"refreshToken\": \"{{refreshToken1}}\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/refresh"
+      }
+    },
+    {
+      "name": "11. Reutilizar refreshToken1 detecta reuso y revoca cadena",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Reutilización de token rotado devuelve 401 REFRESH_TOKEN_REVOKED', () => {",
+              "  pm.response.to.have.status(401);",
+              "  pm.expect(pm.response.json().code).to.eql('REFRESH_TOKEN_REVOKED');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"refreshToken\": \"{{refreshToken1}}\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/refresh"
+      }
+    },
+    {
+      "name": "12. Verificar que refreshToken2 también quedó revocado tras reuso",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Sesión derivada fue revocada automáticamente ante detección de reuso', () => {",
+              "  pm.response.to.have.status(401);",
+              "  pm.expect(pm.response.json().code).to.eql('REFRESH_TOKEN_REVOKED');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"refreshToken\": \"{{refreshToken2}}\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/refresh"
+      }
+    },
+    {
+      "name": "13. SuperAdmin login en /v1/auth/platform/login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Login de plataforma exitoso para SUPER_ADMIN', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.account.role).to.eql('SUPER_ADMIN');",
+              "  pm.expect(body.account.tenantId).to.eql(null);",
+              "  pm.collectionVariables.set('platformRefresh', body.refreshToken);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"superadmin@vital.demo\",\n  \"password\": \"Vital2026!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/platform/login"
+      }
+    },
+    {
+      "name": "14. Logout revoca sesión de plataforma (204)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Logout retorna 204 No Content', () => {",
+              "  pm.response.to.have.status(204);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"refreshToken\": \"{{platformRefresh}}\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/logout"
+      }
+    },
+    {
+      "name": "15. AdminClinica login en clinica-norte (CU-12 / CU-14)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Login AdminClinica exitoso', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.account.role).to.eql('ADMIN_CLINICA');",
+              "  pm.collectionVariables.set('adminAccessToken', body.accessToken);",
+              "  pm.collectionVariables.set('adminAccountId', body.account.id);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"clinicSlug\": \"clinica-norte\",\n  \"email\": \"admin@norte.vital.demo\",\n  \"password\": \"Vital2026!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/login"
+      }
+    },
+    {
+      "name": "16. GET /v1/staff lista directorio y cuota del plan",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Directorio retorna personal y maxActiveAccounts', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const dir = pm.response.json();",
+              "  pm.expect(dir.tenantSlug).to.eql('clinica-norte');",
+              "  pm.expect(dir.maxActiveAccounts).to.eql(8);",
+              "  const aux = dir.accounts.find(a => a.email === 'aux.ramirez@norte.vital.demo');",
+              "  const mendoza = dir.accounts.find(a => a.email === 'dra.mendoza@norte.vital.demo');",
+              "  const vega = dir.accounts.find(a => a.email === 'dr.vega@norte.vital.demo');",
+              "  pm.expect(aux).to.not.be.undefined;",
+              "  pm.expect(mendoza).to.not.be.undefined;",
+              "  pm.expect(vega).to.not.be.undefined;",
+              "  pm.collectionVariables.set('auxAccountId', aux.id);",
+              "  pm.collectionVariables.set('activeSpecId', mendoza.id);",
+              "  pm.collectionVariables.set('inactiveSpecId', vega.id);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+        "url": "{{baseUrl}}/v1/staff"
+      }
+    },
+    {
+      "name": "17. POST /v1/staff rechaza contraseña débil (400 WEAK_PASSWORD)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Alta con contraseña débil devuelve 400 WEAK_PASSWORD', () => {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json().code).to.eql('WEAK_PASSWORD');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Dr. Prueba Débil\",\n  \"email\": \"debil.staff@norte.vital.demo\",\n  \"password\": \"debil\",\n  \"generateTemporaryPassword\": false,\n  \"role\": \"ESPECIALISTA\",\n  \"specialty\": \"General\",\n  \"permissions\": { \"canPrescribe\": false, \"canRegisterPatients\": true, \"canAssignInitialPrimary\": false, \"canUploadStudies\": false }\n}"
+        },
+        "url": "{{baseUrl}}/v1/staff"
+      }
+    },
+    {
+      "name": "18. POST /v1/staff rechaza asignar SUPER_ADMIN (403)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Escalación a SUPER_ADMIN bloqueada con 403 PRIVILEGE_ESCALATION_BLOCKED', () => {",
+              "  pm.response.to.have.status(403);",
+              "  pm.expect(pm.response.json().code).to.eql('PRIVILEGE_ESCALATION_BLOCKED');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Intento SuperAdmin\",\n  \"email\": \"escalacion@norte.vital.demo\",\n  \"generateTemporaryPassword\": true,\n  \"role\": \"SUPER_ADMIN\",\n  \"permissions\": { \"canPrescribe\": false, \"canRegisterPatients\": false, \"canAssignInitialPrimary\": false, \"canUploadStudies\": false }\n}"
+        },
+        "url": "{{baseUrl}}/v1/staff"
+      }
+    },
+    {
+      "name": "19. POST /v1/staff rechaza prescripción sin cédula (400 ATTRIBUTION_REQUIRED)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Prescripción sin atribución devuelve 400 ATTRIBUTION_REQUIRED', () => {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json().code).to.eql('ATTRIBUTION_REQUIRED');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Dr. Sin Cédula\",\n  \"email\": \"sin.cedula@norte.vital.demo\",\n  \"generateTemporaryPassword\": true,\n  \"role\": \"ESPECIALISTA\",\n  \"specialty\": \"General\",\n  \"permissions\": { \"canPrescribe\": true, \"canRegisterPatients\": true, \"canAssignInitialPrimary\": false, \"canUploadStudies\": false }\n}"
+        },
+        "url": "{{baseUrl}}/v1/staff"
+      }
+    },
+    {
+      "name": "20. POST /v1/staff crea especialista con contraseña temporal (201)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const suffix = Date.now() + '-' + Math.floor(Math.random() * 10000);",
+              "pm.collectionVariables.set('staffUniqueEmail', `staff.${suffix}@norte.vital.demo`);"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Alta genera contraseña temporal y mustChangePassword=true', () => {",
+              "  pm.response.to.have.status(201);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.temporaryPassword).to.be.a('string').and.not.empty;",
+              "  pm.expect(body.account.mustChangePassword).to.eql(true);",
+              "  pm.collectionVariables.set('createdStaffId', body.account.id);",
+              "  pm.collectionVariables.set('tempPassword', body.temporaryPassword);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Dr. Nuevo Newman\",\n  \"email\": \"{{staffUniqueEmail}}\",\n  \"generateTemporaryPassword\": true,\n  \"role\": \"ESPECIALISTA\",\n  \"specialty\": \"Neurología\",\n  \"permissions\": { \"canPrescribe\": false, \"canRegisterPatients\": true, \"canAssignInitialPrimary\": false, \"canUploadStudies\": false }\n}"
+        },
+        "url": "{{baseUrl}}/v1/staff"
+      }
+    },
+    {
+      "name": "21. Login especialista recién creado con contraseña temporal",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Login con clave temporal retorna mustChangePassword=true', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.account.mustChangePassword).to.eql(true);",
+              "  pm.collectionVariables.set('staffAccessToken', body.accessToken);",
+              "  pm.collectionVariables.set('staffRefreshToken', body.refreshToken);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"clinicSlug\": \"clinica-norte\",\n  \"email\": \"{{staffUniqueEmail}}\",\n  \"password\": \"{{tempPassword}}\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/login"
+      }
+    },
+    {
+      "name": "22. POST /v1/auth/change-password rechaza nueva clave débil (400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Cambio a contraseña débil retorna 400 WEAK_PASSWORD', () => {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json().code).to.eql('WEAK_PASSWORD');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{staffAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"currentPassword\": \"{{tempPassword}}\",\n  \"newPassword\": \"sinnumero!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/change-password"
+      }
+    },
+    {
+      "name": "23. POST /v1/auth/change-password actualiza contraseña (204)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Cambio válido devuelve 204 No Content', () => {",
+              "  pm.response.to.have.status(204);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{staffAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"currentPassword\": \"{{tempPassword}}\",\n  \"newPassword\": \"NuevaClave2026!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/change-password"
+      }
+    },
+    {
+      "name": "24. GET /v1/auth/me confirma mustChangePassword=false tras cambio",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Perfil refleja mustChangePassword=false', () => {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.json().mustChangePassword).to.eql(false);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{staffAccessToken}}" }],
+        "url": "{{baseUrl}}/v1/auth/me"
+      }
+    },
+    {
+      "name": "25a. Lockout exponencial: fallo 1 devuelve 401",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Primer fallo devuelve 401 INVALID_CREDENTIALS', () => {",
+              "  pm.response.to.have.status(401);",
+              "  pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"clinicSlug\": \"clinica-norte\",\n  \"email\": \"{{staffUniqueEmail}}\",\n  \"password\": \"ClaveIncorrecta1!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/login"
+      }
+    },
+    {
+      "name": "25b. Lockout exponencial: fallo 2 devuelve 401",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Segundo fallo devuelve 401 INVALID_CREDENTIALS', () => {",
+              "  pm.response.to.have.status(401);",
+              "  pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"clinicSlug\": \"clinica-norte\",\n  \"email\": \"{{staffUniqueEmail}}\",\n  \"password\": \"ClaveIncorrecta2!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/login"
+      }
+    },
+    {
+      "name": "25c. Lockout exponencial: fallo 3 bloquea 30s (429 ACCOUNT_LOCKED_OUT)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Tercer fallo activa bloqueo exponencial 429 con Retry-After', () => {",
+              "  pm.response.to.have.status(429);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.code).to.eql('ACCOUNT_LOCKED_OUT');",
+              "  pm.expect(body.retryAfterSeconds).to.be.at.least(1);",
+              "  pm.response.to.have.header('Retry-After');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"clinicSlug\": \"clinica-norte\",\n  \"email\": \"{{staffUniqueEmail}}\",\n  \"password\": \"ClaveIncorrecta3!\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/login"
+      }
+    },
+    {
+      "name": "26. PUT /v1/staff/:id/role asigna cédula, prescripción y auditoría (200)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Actualización de rol habilita prescripción y registra auditoría', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.permissions.canPrescribe).to.eql(true);",
+              "  pm.expect(body.professionalAttribution.licenseCode).to.eql('CED-NEW-770');",
+              "  pm.expect(body.roleAuditLog.length).to.be.at.least(1);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"role\": \"ESPECIALISTA\",\n  \"specialty\": \"Neurología\",\n  \"licenseCode\": \"CED-NEW-770\",\n  \"title\": \"Neurólogo Clínico\",\n  \"canPrescribe\": true,\n  \"canRegisterPatients\": true,\n  \"canAssignInitialPrimary\": false,\n  \"canUploadStudies\": false,\n  \"note\": \"Habilitación de cédula verificada\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/staff/{{createdStaffId}}/role"
+      }
+    },
+    {
+      "name": "27a. PUT /v1/staff/:id/links rechaza especialista inactivo (400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('No vincula especialistas desactivados', () => {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json().code).to.eql('INVALID_LINKED_SPECIALIST');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"specialistIds\": [\"{{inactiveSpecId}}\"]\n}"
+        },
+        "url": "{{baseUrl}}/v1/staff/{{auxAccountId}}/links"
+      }
+    },
+    {
+      "name": "27b. PUT /v1/staff/:id/links vincula especialista activo de la clínica (200)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Vínculo de auxiliar actualizado correctamente', () => {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.json().linkedSpecialistIds).to.include(pm.collectionVariables.get('activeSpecId'));",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"specialistIds\": [\"{{activeSpecId}}\"]\n}"
+        },
+        "url": "{{baseUrl}}/v1/staff/{{auxAccountId}}/links"
+      }
+    },
+    {
+      "name": "28. PATCH /v1/staff/:id/status protege al último AdminClinica activo (409)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Desactivar último AdminClinica devuelve 409 LAST_ADMIN_PROTECTED', () => {",
+              "  pm.response.to.have.status(409);",
+              "  pm.expect(pm.response.json().code).to.eql('LAST_ADMIN_PROTECTED');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PATCH",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"active\": false\n}"
+        },
+        "url": "{{baseUrl}}/v1/staff/{{adminAccountId}}/status"
+      }
+    },
+    {
+      "name": "29a. PATCH /v1/staff/:id/status desactiva cuenta temporal y libera cuota (200)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Desactivar integrante devuelve active=false', () => {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.json().active).to.eql(false);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PATCH",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"active\": false\n}"
+        },
+        "url": "{{baseUrl}}/v1/staff/{{createdStaffId}}/status"
+      }
+    },
+    {
+      "name": "29b. Refresh con token de cuenta desactivada falla (401 REFRESH_TOKEN_REVOKED)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Desactivación revoca sesiones refresh existentes', () => {",
+              "  pm.response.to.have.status(401);",
+              "  pm.expect(pm.response.json().code).to.eql('REFRESH_TOKEN_REVOKED');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"refreshToken\": \"{{staffRefreshToken}}\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/auth/refresh"
+      }
+    }
+  ]
+}
