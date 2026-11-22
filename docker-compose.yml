@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-vital_identity}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vital_identity_dev_pass}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - identity_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -44,8 +44,8 @@ services:
       SeedDemoData: ${SEED_DEMO_DATA:-true}
       OpenApi__Enabled: ${OPENAPI_ENABLED:-true}
     ports:
-      - "8081:8080"
-      - "5082:8082"
+      - "127.0.0.1:8081:8080"
+      - "127.0.0.1:5082:8082"
 
 volumes:
   identity_pgdata:

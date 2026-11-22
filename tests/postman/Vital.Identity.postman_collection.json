@@ -30,6 +30,56 @@
       }
     },
     {
+      "name": "01b. Liveness probe (/health/live)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Liveness retorna 200 Healthy sin depender de DB', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.status).to.eql('Healthy');",
+              "  pm.expect(body.service).to.eql('saas-identity');",
+              "  pm.expect(body.probe).to.eql('live');",
+              "  pm.expect(body.scope).to.eql('process-only');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health/live"
+      }
+    },
+    {
+      "name": "01c. Readiness probe (/health/ready)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Readiness retorna 200 Healthy con PostgreSQL Connected', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.status).to.eql('Healthy');",
+              "  pm.expect(body.service).to.eql('saas-identity');",
+              "  pm.expect(body.probe).to.eql('ready');",
+              "  pm.expect(body.database).to.eql('Connected');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health/ready"
+      }
+    },
+    {
       "name": "02. Documento OpenAPI v1 disponible",
       "event": [
         {
