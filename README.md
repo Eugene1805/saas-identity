@@ -28,12 +28,12 @@ docker compose up -d --build
 
 > Nota al actualizar desde Incremento 1: si ya existía el volumen PostgreSQL generado con `EnsureCreated`, ejecuta `docker compose down -v && docker compose up -d --build` para inicializar limpiamente el esquema administrado con migraciones EF Core (`__EFMigrationsHistory`). Las migraciones posteriores (como `AddProvisioningRecords`) se aplican automáticamente con `docker compose up -d --build`.
 
-- API HTTP Identity: `http://localhost:8081`
-- Servidor gRPC (`h2c`): `http://localhost:5082` (interno contenedor `http://identity-api:8082`)
-- Health check: `http://localhost:8081/health`
-- Documento OpenAPI: `http://localhost:8081/openapi/v1.json`
-- Documentación interactiva Scalar: `http://localhost:8081/scalar/v1`
-- PostgreSQL local (puerto host): `localhost:5433` (base `vital_identity`)
+- API HTTP Identity: `http://127.0.0.1:8081`
+- Servidor gRPC (`h2c`): `http://127.0.0.1:5082` (interno contenedor `http://identity-api:8082`)
+- Health checks: `http://127.0.0.1:8081/health`, `http://127.0.0.1:8081/health/live` (liveness) y `http://127.0.0.1:8081/health/ready` (readiness con PostgreSQL)
+- Documento OpenAPI: `http://127.0.0.1:8081/openapi/v1.json`
+- Documentación interactiva Scalar: `http://127.0.0.1:8081/scalar/v1`
+- PostgreSQL local (puerto host): `127.0.0.1:5433` (base `vital_identity`)
 - Variables clave en Docker:
   - `Email__Mode`: `LogOnly` (desarrollo sin SMTP; no escribe contraseñas en logs) o `Smtp` (`Email__SmtpHost`, `Email__SmtpPort`, `Email__Username`, `Email__Password`).
   - `Platform__Mode`: `Local` (stub local) o `Grpc` (`Platform__GrpcAddress`, por defecto `http://platform-api:8092`).
@@ -42,6 +42,8 @@ docker compose up -d --build
 ## Endpoints implementados (Incrementos 1 y 2)
 
 - `GET /health`
+- `GET /health/live` (sonda Kubernetes liveness `process-only`)
+- `GET /health/ready` (sonda Kubernetes readiness con verificación PostgreSQL)
 - `POST /v1/auth/login` (login por `clinicSlug` + bloqueo exponencial ante intentos fallidos)
 - `POST /v1/auth/platform/login` (`SUPER_ADMIN` global)
 - `POST /v1/auth/refresh` (rotación con detección de reuso)
@@ -70,5 +72,15 @@ docker run --rm --network saas-identity_default `
   postman/newman:alpine run /etc/newman/Vital.Identity.postman_collection.json `
   --env-var "baseUrl=http://identity-api:8080"
 ```
+
+## CI y publicación de imagen en GHCR
+
+El workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) replica el estándar de `saas-platform` y `saas-infra`:
+
+- **PR y push a `develop`/`main`:**
+  - `build-and-test` (`contents: read`): `dotnet restore`, `build` y `test` en `.NET 10`.
+  - `docker-build` (`contents: read`): construye la imagen con etiquetas OCI, ejecuta PostgreSQL 17 + `saas-identity` (`--cap-drop=ALL`, `--security-opt=no-new-privileges:true`, usuario no root `$APP_UID`), valida `/health/live`, `/health/ready`, `/health`, `/openapi/v1.json` y corre la colección Postman/Newman completa.
+- **Push a `main` (`publish-ghcr`, `packages: write`):**
+  - Publica la misma imagen validada en `ghcr.io/eugene1805/saas-identity:<SHA>` (sin sobrescribir `latest`) registrando su digest inmutable `@sha256:...` en `GITHUB_STEP_SUMMARY` para su posterior promoción en `saas-infra`.
 
 Para ver las decisiones abiertas, alcance por incrementos y pendientes con `saas-platform`, consulta `../SEGUIMIENTO_IDENTITY_BACKEND.md`.

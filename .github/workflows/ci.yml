@@ -1,0 +1,198 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  push:
+    branches:
+      - develop
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE_NAME: ghcr.io/eugene1805/saas-identity
+
+jobs:
+  build-and-test:
+    name: Build and test (.NET 10)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore Saas.Identity.slnx
+
+      - name: Build solution
+        run: dotnet build Saas.Identity.slnx --configuration Release --no-restore
+
+      - name: Run tests
+        run: dotnet test Saas.Identity.slnx --configuration Release --no-build --verbosity normal
+
+  docker-build:
+    name: Docker build and integration verification
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build container image (no push)
+        run: |
+          docker build \
+            --file Dockerfile \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.title=saas-identity" \
+            --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --tag "${IMAGE_NAME}:${GITHUB_SHA}" \
+            .
+
+      - name: Verify container health probes and Newman suite
+        run: |
+          set -euo pipefail
+          cleanup() {
+            local status=$?
+            if [ "${status}" -ne 0 ]; then
+              docker logs saas-identity-ci || true
+            fi
+            docker rm -f saas-identity-ci saas-identity-ci-db >/dev/null 2>&1 || true
+            docker network rm saas-identity-ci-net >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker network create saas-identity-ci-net
+          docker run -d --rm \
+            --name saas-identity-ci-db \
+            --network saas-identity-ci-net \
+            -e POSTGRES_DB=vital_identity \
+            -e POSTGRES_USER=vital_identity \
+            -e POSTGRES_PASSWORD=vital_identity_ci_pass \
+            postgres:17-alpine
+
+          for i in $(seq 1 30); do
+            if docker exec saas-identity-ci-db pg_isready -U vital_identity -d vital_identity >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec saas-identity-ci-db pg_isready -U vital_identity -d vital_identity
+
+          docker run -d --rm \
+            --name saas-identity-ci \
+            --network saas-identity-ci-net \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges:true \
+            -p 127.0.0.1:8080:8080 \
+            -p 127.0.0.1:8082:8082 \
+            -e ASPNETCORE_ENVIRONMENT=Development \
+            -e ConnectionStrings__IdentityDb="Host=saas-identity-ci-db;Port=5432;Database=vital_identity;Username=vital_identity;Password=vital_identity_ci_pass" \
+            -e Jwt__Issuer=saas-identity \
+            -e Jwt__Audience=vital-saas \
+            -e Jwt__SigningKey="VitalIdentityDevSigningKeyChangeInProd2026!" \
+            -e Ports__Http=8080 \
+            -e Ports__Grpc=8082 \
+            -e InternalGrpc__ApiKey="VitalInternalGrpcDevKey2026!" \
+            -e Email__Mode=LogOnly \
+            -e Platform__Mode=Local \
+            -e SeedDemoData=true \
+            -e OpenApi__Enabled=true \
+            "${IMAGE_NAME}:${GITHUB_SHA}"
+
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8080/health/ready >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://127.0.0.1:8080/health/live
+          echo ""
+          curl -fsS http://127.0.0.1:8080/health/ready
+          echo ""
+          curl -fsS http://127.0.0.1:8080/health
+          echo ""
+          curl -fsS http://127.0.0.1:8080/openapi/v1.json >/dev/null
+
+          docker run --rm \
+            --network saas-identity-ci-net \
+            -v "${GITHUB_WORKSPACE}/tests/postman:/etc/newman:ro" \
+            postman/newman:alpine \
+            run /etc/newman/Vital.Identity.postman_collection.json \
+            --env-var "baseUrl=http://saas-identity-ci:8080"
+
+      - name: Save validated image artifact (main push only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker save "${IMAGE_NAME}:${GITHUB_SHA}" -o /tmp/saas-identity-image.tar
+
+      - name: Upload validated image artifact (main push only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: saas-identity-image-${{ github.sha }}
+          path: /tmp/saas-identity-image.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  publish-ghcr:
+    name: Publish image to GHCR
+    runs-on: ubuntu-latest
+    needs:
+      - build-and-test
+      - docker-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      packages: write
+    steps:
+      - name: Download validated image artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: saas-identity-image-${{ github.sha }}
+          path: /tmp
+
+      - name: Load validated container image
+        run: docker load -i /tmp/saas-identity-image.tar
+
+      - name: Login to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Push validated image and record digest
+        run: |
+          IMAGE_REF="${IMAGE_NAME}:${GITHUB_SHA}"
+          docker push "${IMAGE_REF}"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE_REF}")
+          {
+            echo "### GHCR Publication Summary"
+            echo ""
+            echo "- **Image reference:** \`${IMAGE_REF}\`"
+            echo "- **Published digest:** \`${DIGEST}\`"
+            echo "- **Source commit SHA:** \`${GITHUB_SHA}\`"
+            echo "- **Event / Ref:** \`${GITHUB_EVENT_NAME}\` / \`${GITHUB_REF}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Logout from GHCR
+        if: always()
+        run: docker logout ghcr.io || true
