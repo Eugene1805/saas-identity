@@ -59,12 +59,26 @@ public sealed class SecurityAdaptersTests
         Assert.Equal("ADMIN_CLINICA", jwt.Claims.First(c => c.Type == "role").Value);
         Assert.Equal(tenantId.ToString(), jwt.Claims.First(c => c.Type == "tenant_id").Value);
 
-        var rawRefresh = issuer.GenerateRefreshToken();
+        var rawRefresh = issuer.GenerateRefreshToken(tenantId);
         var hashA = issuer.HashRefreshToken(rawRefresh);
         var hashB = issuer.HashRefreshToken(rawRefresh);
 
         Assert.Equal(64, hashA.Length);
         Assert.Equal(hashA, hashB);
         Assert.NotEqual(rawRefresh, hashA);
+
+        Assert.True(issuer.TryResolveRefreshTokenScope(rawRefresh, out var tenantScope));
+        Assert.True(tenantScope.IsTenant);
+        Assert.Equal(tenantId, tenantScope.TenantId);
+
+        var globalRefresh = issuer.GenerateRefreshToken(null);
+        Assert.True(issuer.TryResolveRefreshTokenScope(globalRefresh, out var globalScope));
+        Assert.True(globalScope.IsGlobal);
+
+        // Alterar el tenantId dentro del refresh token debe invalidar la firma HMAC de enrutamiento.
+        var otherTenantHex = Guid.Parse("10000000-0000-0000-0000-000000000002").ToString("N");
+        var tamperedTenantToken = rawRefresh.Replace(tenantId.ToString("N"), otherTenantHex, StringComparison.Ordinal);
+        Assert.False(issuer.TryResolveRefreshTokenScope(tamperedTenantToken, out _));
+        Assert.False(issuer.TryResolveRefreshTokenScope("random-invalid-token", out _));
     }
 }

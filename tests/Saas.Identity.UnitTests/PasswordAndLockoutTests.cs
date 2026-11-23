@@ -77,7 +77,7 @@ public sealed class PasswordAndLockoutTests
             StaffPermissions.None,
             null,
             clock.UtcNow);
-        accountRepo.Items.Add(account);
+        accountRepo.Seed(account);
 
         var useCase = new LoginClinicUseCase(accountRepo, refreshRepo, tenantPort, hasher, issuer, clock);
 
@@ -143,20 +143,20 @@ public sealed class PasswordAndLockoutTests
             null,
             clock.UtcNow,
             mustChangePassword: true);
-        accountRepo.Items.Add(account);
+        accountRepo.Seed(account);
 
         var useCase = new ChangePasswordUseCase(accountRepo, hasher);
 
         var wrongCurrent = await useCase.ExecuteAsync(
-            new ChangePasswordCommand(account.Id, "BadCurrent1!", "NuevaClave2026!"));
+            new ChangePasswordCommand(IdentityStoreScope.ForTenant(NorteId), account.Id, "BadCurrent1!", "NuevaClave2026!"));
         Assert.Equal(401, wrongCurrent.Error.HttpStatus);
 
         var weakNew = await useCase.ExecuteAsync(
-            new ChangePasswordCommand(account.Id, "TempPass1!", "debil"));
+            new ChangePasswordCommand(IdentityStoreScope.ForTenant(NorteId), account.Id, "TempPass1!", "debil"));
         Assert.Equal("WEAK_PASSWORD", weakNew.Error.Code);
 
         var ok = await useCase.ExecuteAsync(
-            new ChangePasswordCommand(account.Id, "TempPass1!", "NuevaClave2026!"));
+            new ChangePasswordCommand(IdentityStoreScope.ForTenant(NorteId), account.Id, "TempPass1!", "NuevaClave2026!"));
         Assert.True(ok.IsSuccess);
         Assert.False(account.MustChangePassword);
         Assert.True(hasher.Verify(account.PasswordHash, "NuevaClave2026!"));

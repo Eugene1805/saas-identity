@@ -13,6 +13,7 @@ public sealed class ProvisioningTests
         ProvisionInitialClinicAdminUseCase UseCase,
         InMemoryAccountRepo Accounts,
         InMemoryProvisioningRepo Records,
+        FakeTenantDatabaseMigrator Migrator,
         FakeEmailDeliveryPort EmailPort,
         Pbkdf2PasswordHasherAdapter Hasher,
         FakeClock Clock)
@@ -21,6 +22,7 @@ public sealed class ProvisioningTests
         var clock = new FakeClock(DateTimeOffset.Parse("2026-11-21T19:00:00Z"));
         var accounts = new InMemoryAccountRepo();
         var records = new InMemoryProvisioningRepo(accounts);
+        var migrator = new FakeTenantDatabaseMigrator();
         var hasher = new Pbkdf2PasswordHasherAdapter();
         var tempGen = new TemporaryPasswordGeneratorAdapter();
         var emailPort = new FakeEmailDeliveryPort();
@@ -28,18 +30,19 @@ public sealed class ProvisioningTests
         var useCase = new ProvisionInitialClinicAdminUseCase(
             records,
             accounts,
+            migrator,
             hasher,
             tempGen,
             emailPort,
             clock);
 
-        return (useCase, accounts, records, emailPort, hasher, clock);
+        return (useCase, accounts, records, migrator, emailPort, hasher, clock);
     }
 
     [Fact]
     public async Task ProvisionInitialAdmin_CreatesAccountSendsEmailAndIsIdempotentOnRetry()
     {
-        var (useCase, accounts, _, emailPort, hasher, _) = CreateFixture();
+        var (useCase, accounts, _, migrator, emailPort, hasher, _) = CreateFixture();
         var cmd = new ProvisionInitialClinicAdminCommand(
             AuroraId,
             "prov-aurora-001",
@@ -53,6 +56,7 @@ public sealed class ProvisioningTests
         Assert.True(first.IsSuccess);
         Assert.Equal(ProvisioningRecordStatus.READY, first.Value.Status);
         Assert.True(first.Value.TemporaryPasswordEmailSent);
+        Assert.Contains(AuroraId, migrator.MigratedTenants);
         Assert.Single(accounts.Items);
         Assert.Single(emailPort.SentMessages);
 
@@ -73,7 +77,7 @@ public sealed class ProvisioningTests
     [Fact]
     public async Task ProvisionInitialAdmin_RejectsPayloadMismatch_WithProvisioningConflict()
     {
-        var (useCase, _, _, _, _, _) = CreateFixture();
+        var (useCase, _, _, _, _, _, _) = CreateFixture();
         await useCase.ExecuteAsync(new ProvisionInitialClinicAdminCommand(
             AuroraId, "prov-aurora-001", "clinica-aurora", "Aurora", "Mtro. Ernesto", "admin@aurora.vital.demo"));
 
@@ -88,7 +92,7 @@ public sealed class ProvisioningTests
     [Fact]
     public async Task ProvisionInitialAdmin_MarksFailedOnEmailFailure_AndRecoversSameAccountOnRetry()
     {
-        var (useCase, accounts, records, emailPort, hasher, clock) = CreateFixture();
+        var (useCase, accounts, records, _, emailPort, hasher, clock) = CreateFixture();
         emailPort.ShouldFail = true;
 
         var cmd = new ProvisionInitialClinicAdminCommand(
@@ -124,7 +128,7 @@ public sealed class ProvisioningTests
     [Fact]
     public async Task ProvisionInitialAdmin_BlocksSecondAdminWithDifferentRequestId()
     {
-        var (useCase, _, _, _, _, _) = CreateFixture();
+        var (useCase, _, _, _, _, _, _) = CreateFixture();
         await useCase.ExecuteAsync(new ProvisionInitialClinicAdminCommand(
             AuroraId, "prov-aurora-001", "clinica-aurora", "Aurora", "Mtro. Ernesto", "admin@aurora.vital.demo"));
 
@@ -134,5 +138,19 @@ public sealed class ProvisioningTests
         Assert.True(secondAdmin.IsFailure);
         Assert.Equal("INITIAL_ADMIN_ALREADY_EXISTS", secondAdmin.Error.Code);
         Assert.Equal(409, secondAdmin.Error.HttpStatus);
+    }
+
+    [Fact]
+    public async Task ProvisionInitialAdmin_Returns503_WhenTenantDatabaseUnavailable()
+    {
+        var (useCase, _, _, migrator, _, _, _) = CreateFixture();
+        migrator.ShouldFailUnavailable = true;
+
+        var result = await useCase.ExecuteAsync(new ProvisionInitialClinicAdminCommand(
+            AuroraId, "prov-aurora-003", "clinica-aurora", "Aurora", "Mtro. Ernesto", "admin@aurora.vital.demo"));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("TENANT_DATABASE_UNAVAILABLE", result.Error.Code);
+        Assert.Equal(503, result.Error.HttpStatus);
     }
 }

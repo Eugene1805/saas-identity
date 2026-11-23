@@ -39,7 +39,7 @@ public sealed class AuthUseCasesTests
             new StaffPermissions(true, true, false, false),
             null,
             clock.UtcNow);
-        accountRepo.Items.Add(mendoza);
+        accountRepo.Seed(mendoza);
 
         var useCase = new LoginClinicUseCase(accountRepo, refreshRepo, tenantPort, hasher, issuer, clock);
         var result = await useCase.ExecuteAsync(new LoginClinicCommand("clinica-norte", "dra.mendoza@norte.vital.demo", "Vital2026!"));
@@ -78,7 +78,7 @@ public sealed class AuthUseCasesTests
             StaffPermissions.ForAdminClinica(),
             null,
             clock.UtcNow);
-        accountRepo.Items.Add(admin);
+        accountRepo.Seed(admin);
 
         var login = new LoginClinicUseCase(accountRepo, refreshRepo, tenantPort, hasher, issuer, clock);
         var firstAuth = await login.ExecuteAsync(new LoginClinicCommand("clinica-norte", "admin@norte.vital.demo", "Vital2026!"));
@@ -124,7 +124,7 @@ public sealed class AuthUseCasesTests
             StaffPermissions.ForAdminClinica(),
             null,
             clock.UtcNow);
-        accountRepo.Items.Add(admin);
+        accountRepo.Seed(admin);
 
         var login = await new LoginClinicUseCase(accountRepo, refreshRepo, tenantPort, hasher, issuer, clock)
             .ExecuteAsync(new LoginClinicCommand("clinica-valle", "admin@valle.vital.demo", "Vital2026!"));
@@ -176,7 +176,7 @@ public sealed class AuthUseCasesTests
             StaffPermissions.None,
             null,
             clock.UtcNow);
-        accountRepo.Items.Add(superAdmin);
+        accountRepo.Seed(superAdmin);
 
         var auth = await new LoginPlatformUseCase(accountRepo, refreshRepo, hasher, issuer, clock)
             .ExecuteAsync(new LoginPlatformCommand("superadmin@vital.demo", "Vital2026!"));

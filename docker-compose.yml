@@ -1,17 +1,68 @@
 services:
-  identity-db:
+  identity-global-db:
     image: postgres:17-alpine
-    container_name: vital-identity-db
+    container_name: vital-identity-global-db
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-vital_identity}
-      POSTGRES_USER: ${POSTGRES_USER:-vital_identity}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vital_identity_dev_pass}
+      POSTGRES_DB: ${POSTGRES_GLOBAL_DB:-vital_identity_global}
+      POSTGRES_USER: ${POSTGRES_GLOBAL_USER:-vital_identity_global}
+      POSTGRES_PASSWORD: ${POSTGRES_GLOBAL_PASSWORD:?Set POSTGRES_GLOBAL_PASSWORD in .env}
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
-      - identity_pgdata:/var/lib/postgresql/data
+      - identity_global_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vital_identity} -d ${POSTGRES_DB:-vital_identity}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_GLOBAL_USER:-vital_identity_global} -d ${POSTGRES_GLOBAL_DB:-vital_identity_global}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  identity-norte-db:
+    image: postgres:17-alpine
+    container_name: vital-identity-norte-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_NORTE_DB:-vital_identity_norte}
+      POSTGRES_USER: ${POSTGRES_NORTE_USER:-vital_identity_norte}
+      POSTGRES_PASSWORD: ${POSTGRES_NORTE_PASSWORD:?Set POSTGRES_NORTE_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5436:5432"
+    volumes:
+      - identity_norte_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_NORTE_USER:-vital_identity_norte} -d ${POSTGRES_NORTE_DB:-vital_identity_norte}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  identity-valle-db:
+    image: postgres:17-alpine
+    container_name: vital-identity-valle-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_VALLE_DB:-vital_identity_valle}
+      POSTGRES_USER: ${POSTGRES_VALLE_USER:-vital_identity_valle}
+      POSTGRES_PASSWORD: ${POSTGRES_VALLE_PASSWORD:?Set POSTGRES_VALLE_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5437:5432"
+    volumes:
+      - identity_valle_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_VALLE_USER:-vital_identity_valle} -d ${POSTGRES_VALLE_DB:-vital_identity_valle}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  identity-aurora-db:
+    image: postgres:17-alpine
+    container_name: vital-identity-aurora-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_AURORA_DB:-vital_identity_aurora}
+      POSTGRES_USER: ${POSTGRES_AURORA_USER:-vital_identity_aurora}
+      POSTGRES_PASSWORD: ${POSTGRES_AURORA_PASSWORD:?Set POSTGRES_AURORA_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5438:5432"
+    volumes:
+      - identity_aurora_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_AURORA_USER:-vital_identity_aurora} -d ${POSTGRES_AURORA_DB:-vital_identity_aurora}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -22,30 +73,43 @@ services:
       dockerfile: Dockerfile
     container_name: vital-identity-api
     depends_on:
-      identity-db:
+      identity-global-db:
+        condition: service_healthy
+      identity-norte-db:
+        condition: service_healthy
+      identity-valle-db:
+        condition: service_healthy
+      identity-aurora-db:
         condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__IdentityDb: Host=identity-db;Port=5432;Database=${POSTGRES_DB:-vital_identity};Username=${POSTGRES_USER:-vital_identity};Password=${POSTGRES_PASSWORD:-vital_identity_dev_pass}
+      ConnectionStrings__IdentityGlobalDb: Host=identity-global-db;Port=5432;Database=${POSTGRES_GLOBAL_DB:-vital_identity_global};Username=${POSTGRES_GLOBAL_USER:-vital_identity_global};Password=${POSTGRES_GLOBAL_PASSWORD:?Set POSTGRES_GLOBAL_PASSWORD in .env}
+      TenantDatabases__Connections__10000000-0000-0000-0000-000000000001: Host=identity-norte-db;Port=5432;Database=${POSTGRES_NORTE_DB:-vital_identity_norte};Username=${POSTGRES_NORTE_USER:-vital_identity_norte};Password=${POSTGRES_NORTE_PASSWORD:?Set POSTGRES_NORTE_PASSWORD in .env}
+      TenantDatabases__Connections__10000000-0000-0000-0000-000000000002: Host=identity-valle-db;Port=5432;Database=${POSTGRES_VALLE_DB:-vital_identity_valle};Username=${POSTGRES_VALLE_USER:-vital_identity_valle};Password=${POSTGRES_VALLE_PASSWORD:?Set POSTGRES_VALLE_PASSWORD in .env}
+      TenantDatabases__Connections__10000000-0000-0000-0000-000000000003: Host=identity-aurora-db;Port=5432;Database=${POSTGRES_AURORA_DB:-vital_identity_aurora};Username=${POSTGRES_AURORA_USER:-vital_identity_aurora};Password=${POSTGRES_AURORA_PASSWORD:?Set POSTGRES_AURORA_PASSWORD in .env}
       Jwt__Issuer: saas-identity
       Jwt__Audience: vital-saas
-      Jwt__SigningKey: ${JWT_SIGNING_KEY:-VitalIdentityDevSigningKeyChangeInProd2026!}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?Set JWT_SIGNING_KEY in .env}
       Jwt__AccessTokenMinutes: 15
       Jwt__RefreshTokenDays: 7
       Ports__Http: 8080
       Ports__Grpc: 8082
-      InternalGrpc__ApiKey: ${INTERNAL_GRPC_API_KEY:-VitalInternalGrpcDevKey2026!}
+      InternalGrpc__ApiKey: ${INTERNAL_GRPC_API_KEY:?Set INTERNAL_GRPC_API_KEY in .env}
       Email__Mode: ${EMAIL_MODE:-LogOnly}
       Email__FromAddress: ${EMAIL_FROM_ADDRESS:-no-reply@vital.demo}
       Platform__Mode: ${PLATFORM_MODE:-Local}
       Platform__GrpcAddress: ${PLATFORM_GRPC_ADDRESS:-http://platform-api:8092}
-      Platform__InternalServiceKey: ${INTERNAL_GRPC_API_KEY:-VitalInternalGrpcDevKey2026!}
+      Platform__InternalServiceKey: ${INTERNAL_GRPC_API_KEY:?Set INTERNAL_GRPC_API_KEY in .env}
       Platform__TimeoutSeconds: 3
-      SeedDemoData: ${SEED_DEMO_DATA:-true}
+      SeedDemoData: ${SEED_DEMO_DATA:-false}
+      DemoSeed__Password: ${DEMO_SEED_PASSWORD:-}
       OpenApi__Enabled: ${OPENAPI_ENABLED:-true}
     ports:
       - "127.0.0.1:8081:8080"
       - "127.0.0.1:5082:8082"
 
 volumes:
-  identity_pgdata:
+  identity_global_pgdata:
+  identity_norte_pgdata:
+  identity_valle_pgdata:
+  identity_aurora_pgdata:
