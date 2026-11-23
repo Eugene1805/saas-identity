@@ -37,69 +37,78 @@ public sealed class LoginClinicUseCase(
             return Result.Failure<AuthSessionResult>(tenantCheck.Error);
         }
 
+        var storeScope = IdentityStoreScope.ForTenant(lookup.Tenant!.TenantId);
         var utcNow = clock.UtcNow;
         var normalizedEmail = IdentityAccount.NormalizeEmail(command.Email);
-        var account = await accountRepository.FindByClinicEmailAsync(
-            lookup.Tenant!.TenantId,
-            normalizedEmail,
-            cancellationToken);
 
-        if (account is null)
+        try
         {
-            return Result.Failure<AuthSessionResult>(AuthenticationPolicy.InvalidCredentials);
-        }
+            var account = await accountRepository.FindByClinicEmailAsync(
+                lookup.Tenant.TenantId,
+                normalizedEmail,
+                cancellationToken);
 
-        if (account.Active && account.IsLockedOut(utcNow))
-        {
-            return Result.Failure<AuthSessionResult>(
-                LockoutPolicy.CreateLockedOutError(account.LockoutUntilUtc!.Value, utcNow));
-        }
-
-        var passwordMatches = passwordHasher.Verify(account.PasswordHash, command.Password);
-
-        if (account.Role != OrgRole.SUPER_ADMIN &&
-            account.TenantId == lookup.Tenant.TenantId &&
-            !passwordMatches)
-        {
-            if (account.Active)
+            if (account is null)
             {
-                account.RecordFailedLogin(utcNow);
-                await accountRepository.UpdateAsync(account, cancellationToken);
-
-                if (account.IsLockedOut(utcNow))
-                {
-                    return Result.Failure<AuthSessionResult>(
-                        LockoutPolicy.CreateLockedOutError(account.LockoutUntilUtc!.Value, utcNow));
-                }
+                return Result.Failure<AuthSessionResult>(AuthenticationPolicy.InvalidCredentials);
             }
 
-            return Result.Failure<AuthSessionResult>(AuthenticationPolicy.InvalidCredentials);
+            if (account.Active && account.IsLockedOut(utcNow))
+            {
+                return Result.Failure<AuthSessionResult>(
+                    LockoutPolicy.CreateLockedOutError(account.LockoutUntilUtc!.Value, utcNow));
+            }
+
+            var passwordMatches = passwordHasher.Verify(account.PasswordHash, command.Password);
+
+            if (account.Role != OrgRole.SUPER_ADMIN &&
+                account.TenantId == lookup.Tenant.TenantId &&
+                !passwordMatches)
+            {
+                if (account.Active)
+                {
+                    account.RecordFailedLogin(utcNow);
+                    await accountRepository.UpdateAsync(storeScope, account, cancellationToken);
+
+                    if (account.IsLockedOut(utcNow))
+                    {
+                        return Result.Failure<AuthSessionResult>(
+                            LockoutPolicy.CreateLockedOutError(account.LockoutUntilUtc!.Value, utcNow));
+                    }
+                }
+
+                return Result.Failure<AuthSessionResult>(AuthenticationPolicy.InvalidCredentials);
+            }
+
+            var policyResult = AuthenticationPolicy.ValidateClinicLogin(
+                lookup.Tenant,
+                lookup.PlatformUnavailable,
+                account,
+                passwordMatches);
+
+            if (policyResult.IsFailure)
+            {
+                return Result.Failure<AuthSessionResult>(policyResult.Error);
+            }
+
+            if (account.FailedLoginAttempts > 0 || account.LockoutUntilUtc is not null)
+            {
+                account.ResetLoginFailures();
+                await accountRepository.UpdateAsync(storeScope, account, cancellationToken);
+            }
+
+            var (session, _, response) = SessionAssembler.CreateSessionPair(
+                account,
+                lookup.Tenant,
+                tokenIssuer,
+                utcNow);
+
+            await refreshTokenRepository.AddAsync(storeScope, session, cancellationToken);
+            return Result.Success(response);
         }
-
-        var policyResult = AuthenticationPolicy.ValidateClinicLogin(
-            lookup.Tenant,
-            lookup.PlatformUnavailable,
-            account,
-            passwordMatches);
-
-        if (policyResult.IsFailure)
+        catch (TenantDatabaseUnavailableException)
         {
-            return Result.Failure<AuthSessionResult>(policyResult.Error);
+            return Result.Failure<AuthSessionResult>(AuthenticationPolicy.TenantDatabaseUnavailable);
         }
-
-        if (account.FailedLoginAttempts > 0 || account.LockoutUntilUtc is not null)
-        {
-            account.ResetLoginFailures();
-            await accountRepository.UpdateAsync(account, cancellationToken);
-        }
-
-        var (session, _, response) = SessionAssembler.CreateSessionPair(
-            account,
-            lookup.Tenant,
-            tokenIssuer,
-            utcNow);
-
-        await refreshTokenRepository.AddAsync(session, cancellationToken);
-        return Result.Success(response);
     }
 }

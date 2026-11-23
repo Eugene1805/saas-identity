@@ -40,6 +40,7 @@ public sealed record TenantStaffDirectoryResult(
     IReadOnlyList<StaffMemberDto> Accounts);
 
 public sealed record CreateStaffCommand(
+    IdentityStoreScope ActorStoreScope,
     Guid ActorAccountId,
     string FullName,
     string Email,
@@ -57,6 +58,7 @@ public sealed record CreateStaffResult(
     bool TemporaryPasswordEmailSent = false);
 
 public sealed record UpdateStaffRoleCommand(
+    IdentityStoreScope ActorStoreScope,
     Guid ActorAccountId,
     Guid TargetAccountId,
     string Role,
@@ -70,11 +72,13 @@ public sealed record UpdateStaffRoleCommand(
     string? Note);
 
 public sealed record UpdateStaffStatusCommand(
+    IdentityStoreScope ActorStoreScope,
     Guid ActorAccountId,
     Guid TargetAccountId,
     bool Active);
 
 public sealed record UpdateAuxiliaryLinksCommand(
+    IdentityStoreScope ActorStoreScope,
     Guid ActorAccountId,
     Guid TargetAccountId,
     IReadOnlyList<Guid> SpecialistIds);
@@ -95,11 +99,17 @@ internal static class StaffAssembler
         LoadAuthorizedActorAndTenantAsync(
             IAccountRepository accountRepository,
             ITenantAccessStatePort tenantAccessStatePort,
+            IdentityStoreScope actorStoreScope,
             Guid actorAccountId,
             CancellationToken cancellationToken)
     {
-        var actor = await accountRepository.FindByIdAsync(actorAccountId, cancellationToken);
-        if (actor is null || !actor.Active || actor.Role != OrgRole.ADMIN_CLINICA || actor.TenantId is not Guid tenantId)
+        if (!actorStoreScope.IsTenant || actorStoreScope.TenantId is not Guid tenantId)
+        {
+            return (null, null, StaffManagementPolicy.ForbiddenAdminClinica);
+        }
+
+        var actor = await accountRepository.FindByIdAsync(actorStoreScope, actorAccountId, cancellationToken);
+        if (actor is null || !actor.Active || actor.Role != OrgRole.ADMIN_CLINICA || actor.TenantId != tenantId)
         {
             return (null, null, StaffManagementPolicy.ForbiddenAdminClinica);
         }

@@ -49,7 +49,7 @@ public sealed class LoginPlatformUseCase(
             if (account.Active)
             {
                 account.RecordFailedLogin(utcNow);
-                await accountRepository.UpdateAsync(account, cancellationToken);
+                await accountRepository.UpdateAsync(IdentityStoreScope.Global, account, cancellationToken);
 
                 if (account.IsLockedOut(utcNow))
                 {
@@ -70,7 +70,7 @@ public sealed class LoginPlatformUseCase(
         if (account.FailedLoginAttempts > 0 || account.LockoutUntilUtc is not null)
         {
             account.ResetLoginFailures();
-            await accountRepository.UpdateAsync(account, cancellationToken);
+            await accountRepository.UpdateAsync(IdentityStoreScope.Global, account, cancellationToken);
         }
 
         var (session, _, response) = SessionAssembler.CreateSessionPair(
@@ -79,7 +79,7 @@ public sealed class LoginPlatformUseCase(
             tokenIssuer,
             utcNow);
 
-        await refreshTokenRepository.AddAsync(session, cancellationToken);
+        await refreshTokenRepository.AddAsync(IdentityStoreScope.Global, session, cancellationToken);
         return Result.Success(response);
     }
 }

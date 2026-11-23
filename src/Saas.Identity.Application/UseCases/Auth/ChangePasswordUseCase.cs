@@ -21,34 +21,44 @@ public sealed class ChangePasswordUseCase(
                 400));
         }
 
-        var account = await accountRepository.FindByIdAsync(command.AccountId, cancellationToken);
-        if (account is null)
+        try
         {
-            return Result.Failure(AuthenticationPolicy.InvalidCredentials);
-        }
+            var account = await accountRepository.FindByIdAsync(
+                command.StoreScope,
+                command.AccountId,
+                cancellationToken);
+            if (account is null || account.TenantId != command.StoreScope.TenantId)
+            {
+                return Result.Failure(AuthenticationPolicy.InvalidCredentials);
+            }
 
-        if (!account.Active)
+            if (!account.Active)
+            {
+                return Result.Failure(AuthenticationPolicy.AccountDisabled);
+            }
+
+            if (!passwordHasher.Verify(account.PasswordHash, command.CurrentPassword))
+            {
+                return Result.Failure(new DomainError(
+                    "INVALID_CREDENTIALS",
+                    "La contraseña actual no coincide con tus credenciales vigentes.",
+                    401));
+            }
+
+            var policyCheck = PasswordPolicy.Validate(command.NewPassword);
+            if (policyCheck.IsFailure)
+            {
+                return policyCheck;
+            }
+
+            account.ChangePassword(passwordHasher.Hash(command.NewPassword), mustChangePassword: false);
+            await accountRepository.UpdateAsync(command.StoreScope, account, cancellationToken);
+
+            return Result.Success();
+        }
+        catch (TenantDatabaseUnavailableException)
         {
-            return Result.Failure(AuthenticationPolicy.AccountDisabled);
+            return Result.Failure(AuthenticationPolicy.TenantDatabaseUnavailable);
         }
-
-        if (!passwordHasher.Verify(account.PasswordHash, command.CurrentPassword))
-        {
-            return Result.Failure(new DomainError(
-                "INVALID_CREDENTIALS",
-                "La contraseña actual no coincide con tus credenciales vigentes.",
-                401));
-        }
-
-        var policyCheck = PasswordPolicy.Validate(command.NewPassword);
-        if (policyCheck.IsFailure)
-        {
-            return policyCheck;
-        }
-
-        account.ChangePassword(passwordHasher.Hash(command.NewPassword), mustChangePassword: false);
-        await accountRepository.UpdateAsync(account, cancellationToken);
-
-        return Result.Success();
     }
 }

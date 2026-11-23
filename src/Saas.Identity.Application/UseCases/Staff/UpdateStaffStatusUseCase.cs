@@ -1,5 +1,6 @@
 using Saas.Identity.Application.Ports;
 using Saas.Identity.Domain.Common;
+using Saas.Identity.Domain.Policies;
 
 namespace Saas.Identity.Application.UseCases.Staff;
 
@@ -13,50 +14,65 @@ public sealed class UpdateStaffStatusUseCase(
         UpdateStaffStatusCommand command,
         CancellationToken cancellationToken = default)
     {
-        var (actor, tenant, error) = await StaffAssembler.LoadAuthorizedActorAndTenantAsync(
-            accountRepository,
-            tenantAccessStatePort,
-            command.ActorAccountId,
-            cancellationToken);
-
-        if (error is not null)
+        try
         {
-            return Result.Failure<StaffMemberDto>(error);
-        }
+            var (actor, tenant, error) = await StaffAssembler.LoadAuthorizedActorAndTenantAsync(
+                accountRepository,
+                tenantAccessStatePort,
+                command.ActorStoreScope,
+                command.ActorAccountId,
+                cancellationToken);
 
-        var target = await accountRepository.FindByIdAsync(command.TargetAccountId, cancellationToken);
-        var activeCount = await accountRepository.CountActiveByTenantAsync(tenant!.TenantId, cancellationToken);
-        var activeAdmins = await accountRepository.CountActiveAdminsByTenantAsync(tenant.TenantId, cancellationToken);
-
-        var check = Domain.Policies.StaffManagementPolicy.ValidateStatusChange(
-            actor!,
-            target,
-            tenant,
-            activeCount,
-            activeAdmins,
-            command.Active);
-
-        if (check.IsFailure)
-        {
-            return Result.Failure<StaffMemberDto>(check.Error);
-        }
-
-        if (target!.Active != command.Active)
-        {
-            target.SetActive(command.Active);
-            await accountRepository.UpdateAsync(target, cancellationToken);
-
-            if (!command.Active)
+            if (error is not null)
             {
-                await refreshTokenRepository.RevokeAllForAccountAsync(
-                    target.Id,
-                    clock.UtcNow,
-                    "ACCOUNT_DISABLED",
-                    cancellationToken);
+                return Result.Failure<StaffMemberDto>(error);
             }
-        }
 
-        var auditHistory = await accountRepository.ListRoleAuditForAccountAsync(target.Id, cancellationToken);
-        return Result.Success(StaffAssembler.ToStaffMemberDto(target, auditHistory));
+            var target = await accountRepository.FindByIdAsync(
+                command.ActorStoreScope,
+                command.TargetAccountId,
+                cancellationToken);
+            var activeCount = await accountRepository.CountActiveByTenantAsync(tenant!.TenantId, cancellationToken);
+            var activeAdmins = await accountRepository.CountActiveAdminsByTenantAsync(tenant.TenantId, cancellationToken);
+
+            var check = StaffManagementPolicy.ValidateStatusChange(
+                actor!,
+                target,
+                tenant,
+                activeCount,
+                activeAdmins,
+                command.Active);
+
+            if (check.IsFailure)
+            {
+                return Result.Failure<StaffMemberDto>(check.Error);
+            }
+
+            if (target!.Active != command.Active)
+            {
+                target.SetActive(command.Active);
+                await accountRepository.UpdateAsync(command.ActorStoreScope, target, cancellationToken);
+
+                if (!command.Active)
+                {
+                    await refreshTokenRepository.RevokeAllForAccountAsync(
+                        command.ActorStoreScope,
+                        target.Id,
+                        clock.UtcNow,
+                        "ACCOUNT_DISABLED",
+                        cancellationToken);
+                }
+            }
+
+            var auditHistory = await accountRepository.ListRoleAuditForAccountAsync(
+                tenant.TenantId,
+                target.Id,
+                cancellationToken);
+            return Result.Success(StaffAssembler.ToStaffMemberDto(target, auditHistory));
+        }
+        catch (TenantDatabaseUnavailableException)
+        {
+            return Result.Failure<StaffMemberDto>(AuthenticationPolicy.TenantDatabaseUnavailable);
+        }
     }
 }

@@ -12,35 +12,49 @@ public sealed class UpdateAuxiliaryLinksUseCase(
         UpdateAuxiliaryLinksCommand command,
         CancellationToken cancellationToken = default)
     {
-        var (actor, tenant, error) = await StaffAssembler.LoadAuthorizedActorAndTenantAsync(
-            accountRepository,
-            tenantAccessStatePort,
-            command.ActorAccountId,
-            cancellationToken);
-
-        if (error is not null)
+        try
         {
-            return Result.Failure<StaffMemberDto>(error);
+            var (actor, tenant, error) = await StaffAssembler.LoadAuthorizedActorAndTenantAsync(
+                accountRepository,
+                tenantAccessStatePort,
+                command.ActorStoreScope,
+                command.ActorAccountId,
+                cancellationToken);
+
+            if (error is not null)
+            {
+                return Result.Failure<StaffMemberDto>(error);
+            }
+
+            var target = await accountRepository.FindByIdAsync(
+                command.ActorStoreScope,
+                command.TargetAccountId,
+                cancellationToken);
+            var tenantAccounts = await accountRepository.ListByTenantAsync(tenant!.TenantId, cancellationToken);
+
+            var check = StaffManagementPolicy.ValidateAuxiliaryLinks(
+                actor!,
+                target,
+                command.SpecialistIds,
+                tenantAccounts);
+
+            if (check.IsFailure)
+            {
+                return Result.Failure<StaffMemberDto>(check.Error);
+            }
+
+            target!.UpdateLinkedSpecialists(command.SpecialistIds);
+            await accountRepository.UpdateAsync(command.ActorStoreScope, target, cancellationToken);
+
+            var auditHistory = await accountRepository.ListRoleAuditForAccountAsync(
+                tenant.TenantId,
+                target.Id,
+                cancellationToken);
+            return Result.Success(StaffAssembler.ToStaffMemberDto(target, auditHistory));
         }
-
-        var target = await accountRepository.FindByIdAsync(command.TargetAccountId, cancellationToken);
-        var tenantAccounts = await accountRepository.ListByTenantAsync(tenant!.TenantId, cancellationToken);
-
-        var check = StaffManagementPolicy.ValidateAuxiliaryLinks(
-            actor!,
-            target,
-            command.SpecialistIds,
-            tenantAccounts);
-
-        if (check.IsFailure)
+        catch (TenantDatabaseUnavailableException)
         {
-            return Result.Failure<StaffMemberDto>(check.Error);
+            return Result.Failure<StaffMemberDto>(AuthenticationPolicy.TenantDatabaseUnavailable);
         }
-
-        target!.UpdateLinkedSpecialists(command.SpecialistIds);
-        await accountRepository.UpdateAsync(target, cancellationToken);
-
-        var auditHistory = await accountRepository.ListRoleAuditForAccountAsync(target.Id, cancellationToken);
-        return Result.Success(StaffAssembler.ToStaffMemberDto(target, auditHistory));
     }
 }

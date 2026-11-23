@@ -21,69 +21,88 @@ public sealed class RefreshSessionUseCase(
             return Result.Failure<AuthSessionResult>(SessionAssembler.MissingRefreshToken);
         }
 
-        var utcNow = clock.UtcNow;
-        var presentedHash = tokenIssuer.HashRefreshToken(command.RefreshToken.Trim());
-        var existingSession = await refreshTokenRepository.FindByTokenHashAsync(
-            presentedHash,
-            cancellationToken);
-
-        if (existingSession is null)
+        var rawRefreshToken = command.RefreshToken.Trim();
+        if (!tokenIssuer.TryResolveRefreshTokenScope(rawRefreshToken, out var storeScope))
         {
             return Result.Failure<AuthSessionResult>(SessionAssembler.InvalidRefreshToken);
         }
 
-        if (existingSession.IsRevoked)
+        var utcNow = clock.UtcNow;
+        var presentedHash = tokenIssuer.HashRefreshToken(rawRefreshToken);
+
+        try
         {
-            // Detección de reutilización de refresh token: revocar todas las sesiones activas de la cuenta.
-            await refreshTokenRepository.RevokeAllForAccountAsync(
-                existingSession.AccountId,
-                utcNow,
-                "REUSE_DETECTED",
+            var existingSession = await refreshTokenRepository.FindByTokenHashAsync(
+                storeScope,
+                presentedHash,
                 cancellationToken);
 
-            return Result.Failure<AuthSessionResult>(AuthenticationPolicy.RefreshTokenRevoked);
-        }
-
-        if (existingSession.IsExpired(utcNow))
-        {
-            return Result.Failure<AuthSessionResult>(AuthenticationPolicy.RefreshTokenExpired);
-        }
-
-        var account = await accountRepository.FindByIdAsync(existingSession.AccountId, cancellationToken);
-        if (account is null)
-        {
-            return Result.Failure<AuthSessionResult>(AuthenticationPolicy.InvalidCredentials);
-        }
-
-        if (!account.Active)
-        {
-            return Result.Failure<AuthSessionResult>(AuthenticationPolicy.AccountDisabled);
-        }
-
-        TenantAccessState? tenantState = null;
-        if (account.TenantId is Guid tenantId)
-        {
-            var lookup = await tenantAccessStatePort.GetByTenantIdAsync(tenantId, cancellationToken);
-            var tenantCheck = AuthenticationPolicy.ValidateTenantAccess(
-                lookup.Tenant,
-                lookup.PlatformUnavailable);
-            if (tenantCheck.IsFailure)
+            if (existingSession is null || existingSession.TenantId != storeScope.TenantId)
             {
-                return Result.Failure<AuthSessionResult>(tenantCheck.Error);
+                return Result.Failure<AuthSessionResult>(SessionAssembler.InvalidRefreshToken);
             }
 
-            tenantState = lookup.Tenant;
+            if (existingSession.IsRevoked)
+            {
+                // Detección de reutilización de refresh token: revocar todas las sesiones activas de la cuenta.
+                await refreshTokenRepository.RevokeAllForAccountAsync(
+                    storeScope,
+                    existingSession.AccountId,
+                    utcNow,
+                    "REUSE_DETECTED",
+                    cancellationToken);
+
+                return Result.Failure<AuthSessionResult>(AuthenticationPolicy.RefreshTokenRevoked);
+            }
+
+            if (existingSession.IsExpired(utcNow))
+            {
+                return Result.Failure<AuthSessionResult>(AuthenticationPolicy.RefreshTokenExpired);
+            }
+
+            var account = await accountRepository.FindByIdAsync(
+                storeScope,
+                existingSession.AccountId,
+                cancellationToken);
+            if (account is null || account.TenantId != storeScope.TenantId)
+            {
+                return Result.Failure<AuthSessionResult>(AuthenticationPolicy.InvalidCredentials);
+            }
+
+            if (!account.Active)
+            {
+                return Result.Failure<AuthSessionResult>(AuthenticationPolicy.AccountDisabled);
+            }
+
+            TenantAccessState? tenantState = null;
+            if (storeScope.TenantId is Guid tenantId)
+            {
+                var lookup = await tenantAccessStatePort.GetByTenantIdAsync(tenantId, cancellationToken);
+                var tenantCheck = AuthenticationPolicy.ValidateTenantAccess(
+                    lookup.Tenant,
+                    lookup.PlatformUnavailable);
+                if (tenantCheck.IsFailure)
+                {
+                    return Result.Failure<AuthSessionResult>(tenantCheck.Error);
+                }
+
+                tenantState = lookup.Tenant;
+            }
+
+            var (newSession, _, response) = SessionAssembler.CreateSessionPair(
+                account,
+                tenantState,
+                tokenIssuer,
+                utcNow);
+
+            existingSession.Revoke(utcNow, "ROTATED", newSession.Id);
+            await refreshTokenRepository.RotateAsync(storeScope, existingSession, newSession, cancellationToken);
+
+            return Result.Success(response);
         }
-
-        var (newSession, _, response) = SessionAssembler.CreateSessionPair(
-            account,
-            tenantState,
-            tokenIssuer,
-            utcNow);
-
-        existingSession.Revoke(utcNow, "ROTATED", newSession.Id);
-        await refreshTokenRepository.RotateAsync(existingSession, newSession, cancellationToken);
-
-        return Result.Success(response);
+        catch (TenantDatabaseUnavailableException)
+        {
+            return Result.Failure<AuthSessionResult>(AuthenticationPolicy.TenantDatabaseUnavailable);
+        }
     }
 }

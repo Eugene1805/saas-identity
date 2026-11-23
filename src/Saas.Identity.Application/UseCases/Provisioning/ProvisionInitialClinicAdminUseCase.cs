@@ -9,6 +9,7 @@ namespace Saas.Identity.Application.UseCases.Provisioning;
 public sealed class ProvisionInitialClinicAdminUseCase(
     IProvisioningRecordRepository provisioningRepository,
     IAccountRepository accountRepository,
+    ITenantDatabaseMigratorPort tenantDatabaseMigrator,
     IPasswordHasherPort passwordHasher,
     ITemporaryPasswordGeneratorPort temporaryPasswordGenerator,
     ITemporaryPasswordDeliveryPort temporaryPasswordDelivery,
@@ -47,7 +48,6 @@ public sealed class ProvisionInitialClinicAdminUseCase(
             return Result.Failure<ProvisionInitialClinicAdminResult>(InvalidRequest);
         }
 
-        var utcNow = clock.UtcNow;
         var cleanRequestId = command.ProvisioningRequestId.Trim();
         var normalizedEmail = IdentityAccount.NormalizeEmail(command.AdminEmail);
         var slug = string.IsNullOrWhiteSpace(command.ClinicSlug)
@@ -57,35 +57,60 @@ public sealed class ProvisionInitialClinicAdminUseCase(
             ? slug
             : command.ClinicName.Trim();
 
+        try
+        {
+            await tenantDatabaseMigrator.EnsureMigratedAsync(command.TenantId, cancellationToken);
+
+            return await provisioningRepository.ExecuteWithTenantLockAsync(
+                command.TenantId,
+                ct => ExecuteProvisioningLockedAsync(
+                    command,
+                    cleanRequestId,
+                    normalizedEmail,
+                    slug,
+                    clinicName,
+                    ct),
+                cancellationToken);
+        }
+        catch (TenantDatabaseUnavailableException)
+        {
+            return Result.Failure<ProvisionInitialClinicAdminResult>(AuthenticationPolicy.TenantDatabaseUnavailable);
+        }
+    }
+
+    private async Task<Result<ProvisionInitialClinicAdminResult>> ExecuteProvisioningLockedAsync(
+        ProvisionInitialClinicAdminCommand command,
+        string cleanRequestId,
+        string normalizedEmail,
+        string slug,
+        string clinicName,
+        CancellationToken cancellationToken)
+    {
+        var utcNow = clock.UtcNow;
+
         var existingRecord = await provisioningRepository.FindByRequestIdAsync(
+            command.TenantId,
             cleanRequestId,
             cancellationToken);
 
         if (existingRecord is not null)
         {
-            if (!existingRecord.MatchesPayload(command.TenantId, normalizedEmail, command.AdminFullName))
-            {
-                return Result.Failure<ProvisionInitialClinicAdminResult>(ProvisioningConflict);
-            }
-
-            if (existingRecord.Status == ProvisioningRecordStatus.READY &&
-                existingRecord.InitialAdminAccountId is Guid readyAccountId)
-            {
-                return Result.Success(new ProvisionInitialClinicAdminResult(
-                    existingRecord.TenantId,
-                    existingRecord.ProvisioningRequestId,
-                    readyAccountId,
-                    ProvisioningRecordStatus.READY,
-                    Gmt6Clock.FormatIsoGmt6(utcNow),
-                    existingRecord.TemporaryPasswordEmailSent));
-            }
-
-            return await RetryExistingProvisioningAsync(
+            return await HandleExistingRequestAsync(
                 existingRecord,
+                command,
+                normalizedEmail,
                 slug,
                 clinicName,
                 utcNow,
                 cancellationToken);
+        }
+
+        var anyTenantProvisioning = await provisioningRepository.FindAnyByTenantAsync(
+            command.TenantId,
+            cancellationToken);
+        if (anyTenantProvisioning is not null)
+        {
+            return Result.Failure<ProvisionInitialClinicAdminResult>(InitialAdminAlreadyExists);
         }
 
         var existingAdminCount = await accountRepository.CountActiveAdminsByTenantAsync(
@@ -132,7 +157,42 @@ public sealed class ProvisionInitialClinicAdminUseCase(
             account.Id,
             utcNow);
 
-        await provisioningRepository.AddWithAccountAsync(record, account, cancellationToken);
+        var insertOutcome = await provisioningRepository.AddWithAccountAsync(
+            command.TenantId,
+            record,
+            account,
+            cancellationToken);
+
+        if (insertOutcome == ProvisioningInsertOutcome.DuplicateRequestId)
+        {
+            var concurrentRecord = await provisioningRepository.FindByRequestIdAsync(
+                command.TenantId,
+                cleanRequestId,
+                cancellationToken);
+            if (concurrentRecord is null)
+            {
+                return Result.Failure<ProvisionInitialClinicAdminResult>(ProvisioningConflict);
+            }
+
+            return await HandleExistingRequestAsync(
+                concurrentRecord,
+                command,
+                normalizedEmail,
+                slug,
+                clinicName,
+                clock.UtcNow,
+                cancellationToken);
+        }
+
+        if (insertOutcome == ProvisioningInsertOutcome.TenantAlreadyProvisioned)
+        {
+            return Result.Failure<ProvisionInitialClinicAdminResult>(InitialAdminAlreadyExists);
+        }
+
+        if (insertOutcome == ProvisioningInsertOutcome.DuplicateEmail)
+        {
+            return Result.Failure<ProvisionInitialClinicAdminResult>(StaffManagementPolicy.DuplicateStaffEmail);
+        }
 
         var delivery = await temporaryPasswordDelivery.SendTemporaryPasswordAsync(
             new TemporaryPasswordEmailMessage(
@@ -147,13 +207,13 @@ public sealed class ProvisionInitialClinicAdminUseCase(
         if (!delivery.Succeeded)
         {
             record.MarkFailed(account.Id, delivery.ErrorCode ?? EmailDeliveryFailed.Code, clock.UtcNow);
-            await provisioningRepository.UpdateAsync(record, cancellationToken);
+            await provisioningRepository.UpdateAsync(command.TenantId, record, cancellationToken);
             return Result.Failure<ProvisionInitialClinicAdminResult>(EmailDeliveryFailed);
         }
 
         var completedAtUtc = clock.UtcNow;
         record.MarkReady(account.Id, completedAtUtc);
-        await provisioningRepository.UpdateAsync(record, cancellationToken);
+        await provisioningRepository.UpdateAsync(command.TenantId, record, cancellationToken);
 
         return Result.Success(new ProvisionInitialClinicAdminResult(
             record.TenantId,
@@ -164,15 +224,48 @@ public sealed class ProvisionInitialClinicAdminUseCase(
             TemporaryPasswordEmailSent: true));
     }
 
-    private async Task<Result<ProvisionInitialClinicAdminResult>> RetryExistingProvisioningAsync(
+    private Task<Result<ProvisionInitialClinicAdminResult>> HandleExistingRequestAsync(
         ProvisioningRecord existingRecord,
-        string clinicSlug,
+        ProvisionInitialClinicAdminCommand command,
+        string normalizedEmail,
+        string slug,
         string clinicName,
         DateTimeOffset utcNow,
         CancellationToken cancellationToken)
     {
+        if (!existingRecord.MatchesPayload(command.TenantId, normalizedEmail, command.AdminFullName))
+        {
+            return Task.FromResult(Result.Failure<ProvisionInitialClinicAdminResult>(ProvisioningConflict));
+        }
+
+        if (existingRecord.Status == ProvisioningRecordStatus.READY &&
+            existingRecord.InitialAdminAccountId is Guid readyAccountId)
+        {
+            return Task.FromResult(Result.Success(new ProvisionInitialClinicAdminResult(
+                existingRecord.TenantId,
+                existingRecord.ProvisioningRequestId,
+                readyAccountId,
+                ProvisioningRecordStatus.READY,
+                Gmt6Clock.FormatIsoGmt6(utcNow),
+                existingRecord.TemporaryPasswordEmailSent)));
+        }
+
+        return RetryExistingProvisioningAsync(
+            existingRecord,
+            slug,
+            clinicName,
+            cancellationToken);
+    }
+
+    private async Task<Result<ProvisionInitialClinicAdminResult>> RetryExistingProvisioningAsync(
+        ProvisioningRecord existingRecord,
+        string clinicSlug,
+        string clinicName,
+        CancellationToken cancellationToken)
+    {
+        var storeScope = IdentityStoreScope.ForTenant(existingRecord.TenantId);
         IdentityAccount? account = existingRecord.InitialAdminAccountId is Guid accountId
-            ? await accountRepository.FindByIdAsync(accountId, cancellationToken)
+            ? await accountRepository.FindByIdAsync(storeScope, accountId, cancellationToken)
             : null;
 
         account ??= await accountRepository.FindByClinicEmailAsync(
@@ -205,13 +298,21 @@ public sealed class ProvisionInitialClinicAdminUseCase(
         if (!delivery.Succeeded)
         {
             existingRecord.MarkFailed(account.Id, delivery.ErrorCode ?? EmailDeliveryFailed.Code, clock.UtcNow);
-            await provisioningRepository.UpdateWithAccountAsync(existingRecord, account, cancellationToken);
+            await provisioningRepository.UpdateWithAccountAsync(
+                existingRecord.TenantId,
+                existingRecord,
+                account,
+                cancellationToken);
             return Result.Failure<ProvisionInitialClinicAdminResult>(EmailDeliveryFailed);
         }
 
         var completedAtUtc = clock.UtcNow;
         existingRecord.MarkReady(account.Id, completedAtUtc);
-        await provisioningRepository.UpdateWithAccountAsync(existingRecord, account, cancellationToken);
+        await provisioningRepository.UpdateWithAccountAsync(
+            existingRecord.TenantId,
+            existingRecord,
+            account,
+            cancellationToken);
 
         return Result.Success(new ProvisionInitialClinicAdminResult(
             existingRecord.TenantId,

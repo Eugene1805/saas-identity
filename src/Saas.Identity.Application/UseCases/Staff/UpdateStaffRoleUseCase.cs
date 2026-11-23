@@ -15,84 +15,98 @@ public sealed class UpdateStaffRoleUseCase(
         UpdateStaffRoleCommand command,
         CancellationToken cancellationToken = default)
     {
-        var (actor, tenant, error) = await StaffAssembler.LoadAuthorizedActorAndTenantAsync(
-            accountRepository,
-            tenantAccessStatePort,
-            command.ActorAccountId,
-            cancellationToken);
-
-        if (error is not null)
+        try
         {
-            return Result.Failure<StaffMemberDto>(error);
-        }
+            var (actor, tenant, error) = await StaffAssembler.LoadAuthorizedActorAndTenantAsync(
+                accountRepository,
+                tenantAccessStatePort,
+                command.ActorStoreScope,
+                command.ActorAccountId,
+                cancellationToken);
 
-        if (!StaffAssembler.TryParseOrgRole(command.Role, out var nextRole))
-        {
-            return Result.Failure<StaffMemberDto>(StaffAssembler.InvalidRoleValue);
-        }
+            if (error is not null)
+            {
+                return Result.Failure<StaffMemberDto>(error);
+            }
 
-        var target = await accountRepository.FindByIdAsync(command.TargetAccountId, cancellationToken);
-        var hasNewAttribution = !string.IsNullOrWhiteSpace(command.LicenseCode) &&
-            !string.IsNullOrWhiteSpace(command.Title);
-        var hasAttribution = hasNewAttribution || target?.ProfessionalAttribution is not null;
-        var activeAdmins = await accountRepository.CountActiveAdminsByTenantAsync(tenant!.TenantId, cancellationToken);
+            if (!StaffAssembler.TryParseOrgRole(command.Role, out var nextRole))
+            {
+                return Result.Failure<StaffMemberDto>(StaffAssembler.InvalidRoleValue);
+            }
 
-        var check = StaffManagementPolicy.ValidateUpdateRole(
-            actor!,
-            target,
-            nextRole,
-            command.CanPrescribe,
-            hasAttribution,
-            activeAdmins);
+            var target = await accountRepository.FindByIdAsync(
+                command.ActorStoreScope,
+                command.TargetAccountId,
+                cancellationToken);
+            var hasNewAttribution = !string.IsNullOrWhiteSpace(command.LicenseCode) &&
+                !string.IsNullOrWhiteSpace(command.Title);
+            var hasAttribution = hasNewAttribution || target?.ProfessionalAttribution is not null;
+            var activeAdmins = await accountRepository.CountActiveAdminsByTenantAsync(tenant!.TenantId, cancellationToken);
 
-        if (check.IsFailure)
-        {
-            return Result.Failure<StaffMemberDto>(check.Error);
-        }
-
-        var utcNow = clock.UtcNow;
-        var previousRole = target!.Role;
-        var previousCanPrescribe = target.Permissions.CanPrescribe;
-
-        var nextAttribution = nextRole == OrgRole.ESPECIALISTA
-            ? (hasNewAttribution
-                ? new ProfessionalAttribution(
-                    command.LicenseCode!.Trim(),
-                    command.Title!.Trim(),
-                    target.ProfessionalAttribution?.RegisteredAtGmt6 ?? Gmt6Clock.FormatIsoGmt6(utcNow))
-                : target.ProfessionalAttribution)
-            : null;
-
-        var nextSpecialty = nextRole == OrgRole.ESPECIALISTA
-            ? (!string.IsNullOrWhiteSpace(command.Specialty) ? command.Specialty : target.Specialty)
-            : null;
-
-        var sanitizedPermissions = StaffManagementPolicy.SanitizePermissionsForRole(
-            nextRole,
-            new StaffPermissions(
+            var check = StaffManagementPolicy.ValidateUpdateRole(
+                actor!,
+                target,
+                nextRole,
                 command.CanPrescribe,
-                command.CanRegisterPatients,
-                command.CanAssignInitialPrimary,
-                command.CanUploadStudies));
+                hasAttribution,
+                activeAdmins);
 
-        target.UpdateRoleAndPermissions(nextRole, nextSpecialty, nextAttribution, sanitizedPermissions);
+            if (check.IsFailure)
+            {
+                return Result.Failure<StaffMemberDto>(check.Error);
+            }
 
-        var auditEntry = RoleAuditEntry.Create(
-            Guid.NewGuid(),
-            tenant.TenantId,
-            target.Id,
-            previousRole,
-            nextRole,
-            previousCanPrescribe,
-            sanitizedPermissions.CanPrescribe,
-            actor!.Id,
-            actor.FullName,
-            utcNow,
-            command.Note ?? string.Empty);
+            var utcNow = clock.UtcNow;
+            var previousRole = target!.Role;
+            var previousCanPrescribe = target.Permissions.CanPrescribe;
 
-        await accountRepository.UpdateWithRoleAuditAsync(target, auditEntry, cancellationToken);
-        var auditHistory = await accountRepository.ListRoleAuditForAccountAsync(target.Id, cancellationToken);
+            var nextAttribution = nextRole == OrgRole.ESPECIALISTA
+                ? (hasNewAttribution
+                    ? new ProfessionalAttribution(
+                        command.LicenseCode!.Trim(),
+                        command.Title!.Trim(),
+                        target.ProfessionalAttribution?.RegisteredAtGmt6 ?? Gmt6Clock.FormatIsoGmt6(utcNow))
+                    : target.ProfessionalAttribution)
+                : null;
 
-        return Result.Success(StaffAssembler.ToStaffMemberDto(target, auditHistory));
+            var nextSpecialty = nextRole == OrgRole.ESPECIALISTA
+                ? (!string.IsNullOrWhiteSpace(command.Specialty) ? command.Specialty : target.Specialty)
+                : null;
+
+            var sanitizedPermissions = StaffManagementPolicy.SanitizePermissionsForRole(
+                nextRole,
+                new StaffPermissions(
+                    command.CanPrescribe,
+                    command.CanRegisterPatients,
+                    command.CanAssignInitialPrimary,
+                    command.CanUploadStudies));
+
+            target.UpdateRoleAndPermissions(nextRole, nextSpecialty, nextAttribution, sanitizedPermissions);
+
+            var auditEntry = RoleAuditEntry.Create(
+                Guid.NewGuid(),
+                tenant.TenantId,
+                target.Id,
+                previousRole,
+                nextRole,
+                previousCanPrescribe,
+                sanitizedPermissions.CanPrescribe,
+                actor!.Id,
+                actor.FullName,
+                utcNow,
+                command.Note ?? string.Empty);
+
+            await accountRepository.UpdateWithRoleAuditAsync(tenant.TenantId, target, auditEntry, cancellationToken);
+            var auditHistory = await accountRepository.ListRoleAuditForAccountAsync(
+                tenant.TenantId,
+                target.Id,
+                cancellationToken);
+
+            return Result.Success(StaffAssembler.ToStaffMemberDto(target, auditHistory));
+        }
+        catch (TenantDatabaseUnavailableException)
+        {
+            return Result.Failure<StaffMemberDto>(AuthenticationPolicy.TenantDatabaseUnavailable);
+        }
     }
 }
