@@ -123,7 +123,8 @@ internal static class AuthEndpoints
             .WithDescription("Marca la sesión como revocada de manera idempotente para impedir futuras renovaciones.")
             .AllowAnonymous()
             .Produces(StatusCodes.Status204NoContent)
-            .Produces<ProblemDetails>(StatusCodes.Status400BadRequest);
+            .Produces<ProblemDetails>(StatusCodes.Status400BadRequest)
+            .Produces<ProblemDetails>(StatusCodes.Status503ServiceUnavailable);
 
         group.MapPost("/change-password", async (
                 ClaimsPrincipal user,
@@ -132,13 +133,13 @@ internal static class AuthEndpoints
                 HttpContext httpContext,
                 CancellationToken cancellationToken) =>
             {
-                if (!user.TryGetAccountId(out var accountId))
+                if (!user.TryGetActorIdentity(out var actor))
                 {
                     return Results.Unauthorized();
                 }
 
                 var result = await useCase.ExecuteAsync(
-                    new ChangePasswordCommand(accountId, request.CurrentPassword, request.NewPassword),
+                    new ChangePasswordCommand(actor.StoreScope, actor.AccountId, request.CurrentPassword, request.NewPassword),
                     cancellationToken);
 
                 return result.IsSuccess
@@ -152,7 +153,8 @@ internal static class AuthEndpoints
             .Produces(StatusCodes.Status204NoContent)
             .Produces<ProblemDetails>(StatusCodes.Status400BadRequest)
             .Produces<ProblemDetails>(StatusCodes.Status401Unauthorized)
-            .Produces<ProblemDetails>(StatusCodes.Status403Forbidden);
+            .Produces<ProblemDetails>(StatusCodes.Status403Forbidden)
+            .Produces<ProblemDetails>(StatusCodes.Status503ServiceUnavailable);
 
         group.MapGet("/me", async (
                 ClaimsPrincipal user,
@@ -160,12 +162,12 @@ internal static class AuthEndpoints
                 HttpContext httpContext,
                 CancellationToken cancellationToken) =>
             {
-                if (!user.TryGetAccountId(out var accountId))
+                if (!user.TryGetActorIdentity(out var actor))
                 {
                     return Results.Unauthorized();
                 }
 
-                var result = await useCase.ExecuteAsync(accountId, cancellationToken);
+                var result = await useCase.ExecuteAsync(actor.StoreScope, actor.AccountId, cancellationToken);
                 return result.IsSuccess
                     ? Results.Ok(result.Value)
                     : ProblemDetailsMapper.ToProblem(result.Error, httpContext);

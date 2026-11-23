@@ -10,6 +10,7 @@ using Saas.Identity.Application.UseCases.Staff;
 using Saas.Identity.Infrastructure.Email;
 using Saas.Identity.Infrastructure.Persistence;
 using Saas.Identity.Infrastructure.Persistence.Repositories;
+using Saas.Identity.Infrastructure.Persistence.Tenancy;
 using Saas.Identity.Infrastructure.Platform;
 using Saas.Identity.Infrastructure.Security;
 
@@ -21,12 +22,16 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("IdentityDb")
-            ?? throw new InvalidOperationException("Falta ConnectionStrings:IdentityDb.");
+        var globalConnectionString = configuration.GetConnectionString("IdentityGlobalDb")
+            ?? configuration.GetConnectionString("IdentityDb");
+        if (string.IsNullOrWhiteSpace(globalConnectionString))
+        {
+            throw new InvalidOperationException("Falta ConnectionStrings:IdentityGlobalDb.");
+        }
 
-        services.AddDbContext<IdentityDbContext>(options =>
+        services.AddDbContextFactory<GlobalIdentityDbContext>(options =>
             options.UseNpgsql(
-                connectionString,
+                globalConnectionString,
                 npgsql => npgsql
                     .MigrationsHistoryTable("__EFMigrationsHistory", "identity")
                     .EnableRetryOnFailure()));
@@ -34,6 +39,12 @@ public static class DependencyInjection
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
         services.Configure<PlatformOptions>(configuration.GetSection(PlatformOptions.SectionName));
         services.Configure<EmailOptions>(configuration.GetSection(EmailOptions.SectionName));
+        services.Configure<TenantDatabasesOptions>(configuration.GetSection(TenantDatabasesOptions.SectionName));
+
+        services.AddSingleton<ITenantConnectionResolver, TenantConnectionResolver>();
+        services.AddSingleton<TenantDataSourcePool>();
+        services.AddSingleton<ITenantDbContextFactory, NpgsqlTenantDbContextFactory>();
+        services.AddSingleton<ITenantDatabaseMigratorPort, EfTenantDatabaseMigrator>();
 
         services.AddSingleton<IClockPort, SystemClockAdapter>();
         services.AddSingleton<IPasswordHasherPort, Pbkdf2PasswordHasherAdapter>();

@@ -7,6 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Saas.Identity.IntegrationTests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Saas.Identity.Application\Saas.Identity.Application.csproj" />
     <ProjectReference Include="..\Saas.Identity.Infrastructure\Saas.Identity.Infrastructure.csproj" />
   </ItemGroup>

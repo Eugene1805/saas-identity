@@ -20,18 +20,26 @@ internal sealed class IdentityProvisioningGrpcService(
         ServerCallContext context)
     {
         var configuredKey = optionsAccessor.Value.ApiKey;
-        if (!string.IsNullOrWhiteSpace(configuredKey))
+        if (string.IsNullOrWhiteSpace(configuredKey) ||
+            Encoding.UTF8.GetByteCount(configuredKey) < 16)
         {
-            var presentedKey = context.RequestHeaders.GetValue("x-internal-service-key");
-            if (string.IsNullOrEmpty(presentedKey) || !FixedTimeEquals(configuredKey, presentedKey))
-            {
-                logger.LogWarning(
-                    "Llamada gRPC no autenticada rechazada en ProvisionInitialClinicAdmin (RequestId={RequestId}).",
-                    request.ProvisioningRequestId);
-                throw new RpcException(new Status(
-                    StatusCode.Unauthenticated,
-                    "Credencial interna x-internal-service-key inválida o ausente."));
-            }
+            logger.LogError(
+                "Llamada gRPC rechazada (fail-closed) porque InternalGrpc:ApiKey no está configurada correctamente (RequestId={RequestId}).",
+                request.ProvisioningRequestId);
+            throw new RpcException(new Status(
+                StatusCode.Unauthenticated,
+                "La credencial interna gRPC del servidor no está configurada correctamente."));
+        }
+
+        var presentedKey = context.RequestHeaders.GetValue("x-internal-service-key");
+        if (string.IsNullOrEmpty(presentedKey) || !FixedTimeEquals(configuredKey, presentedKey))
+        {
+            logger.LogWarning(
+                "Llamada gRPC no autenticada rechazada en ProvisionInitialClinicAdmin (RequestId={RequestId}).",
+                request.ProvisioningRequestId);
+            throw new RpcException(new Status(
+                StatusCode.Unauthenticated,
+                "Credencial interna x-internal-service-key inválida o ausente."));
         }
 
         if (!Guid.TryParse(request.TenantId, out var tenantId))
@@ -58,7 +66,7 @@ internal sealed class IdentityProvisioningGrpcService(
                 "VALIDATION_ERROR" => StatusCode.InvalidArgument,
                 "PROVISIONING_CONFLICT" => StatusCode.FailedPrecondition,
                 "INITIAL_ADMIN_ALREADY_EXISTS" or "DUPLICATE_STAFF_EMAIL" => StatusCode.AlreadyExists,
-                "EMAIL_DELIVERY_FAILED" => StatusCode.Unavailable,
+                "EMAIL_DELIVERY_FAILED" or "TENANT_DATABASE_UNAVAILABLE" => StatusCode.Unavailable,
                 _ => result.Error.HttpStatus == 503 ? StatusCode.Unavailable : StatusCode.Internal,
             };
 
