@@ -47,12 +47,12 @@ internal static class StaffEndpoints
                 HttpContext httpContext,
                 CancellationToken cancellationToken) =>
             {
-                if (!user.TryGetAccountId(out var actorAccountId))
+                if (!user.TryGetActorIdentity(out var actor))
                 {
                     return Results.Unauthorized();
                 }
 
-                var result = await useCase.ExecuteAsync(actorAccountId, cancellationToken);
+                var result = await useCase.ExecuteAsync(actor.StoreScope, actor.AccountId, cancellationToken);
                 return result.IsSuccess
                     ? Results.Ok(result.Value)
                     : ProblemDetailsMapper.ToProblem(result.Error, httpContext);
@@ -72,14 +72,15 @@ internal static class StaffEndpoints
                 HttpContext httpContext,
                 CancellationToken cancellationToken) =>
             {
-                if (!user.TryGetAccountId(out var actorAccountId))
+                if (!user.TryGetActorIdentity(out var actor))
                 {
                     return Results.Unauthorized();
                 }
 
                 var result = await useCase.ExecuteAsync(
                     new CreateStaffCommand(
-                        actorAccountId,
+                        actor.StoreScope,
+                        actor.AccountId,
                         request.FullName,
                         request.Email,
                         request.Password,
@@ -113,14 +114,15 @@ internal static class StaffEndpoints
                 HttpContext httpContext,
                 CancellationToken cancellationToken) =>
             {
-                if (!user.TryGetAccountId(out var actorAccountId))
+                if (!user.TryGetActorIdentity(out var actor))
                 {
                     return Results.Unauthorized();
                 }
 
                 var result = await useCase.ExecuteAsync(
                     new UpdateStaffRoleCommand(
-                        actorAccountId,
+                        actor.StoreScope,
+                        actor.AccountId,
                         accountId,
                         request.Role,
                         request.Specialty,
@@ -156,13 +158,13 @@ internal static class StaffEndpoints
                 HttpContext httpContext,
                 CancellationToken cancellationToken) =>
             {
-                if (!user.TryGetAccountId(out var actorAccountId))
+                if (!user.TryGetActorIdentity(out var actor))
                 {
                     return Results.Unauthorized();
                 }
 
                 var result = await useCase.ExecuteAsync(
-                    new UpdateStaffStatusCommand(actorAccountId, accountId, request.Active),
+                    new UpdateStaffStatusCommand(actor.StoreScope, actor.AccountId, accountId, request.Active),
                     cancellationToken);
 
                 return result.IsSuccess
@@ -187,14 +189,15 @@ internal static class StaffEndpoints
                 HttpContext httpContext,
                 CancellationToken cancellationToken) =>
             {
-                if (!user.TryGetAccountId(out var actorAccountId))
+                if (!user.TryGetActorIdentity(out var actor))
                 {
                     return Results.Unauthorized();
                 }
 
                 var result = await useCase.ExecuteAsync(
                     new UpdateAuxiliaryLinksCommand(
-                        actorAccountId,
+                        actor.StoreScope,
+                        actor.AccountId,
                         accountId,
                         request.SpecialistIds ?? []),
                     cancellationToken);

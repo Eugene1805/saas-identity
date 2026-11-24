@@ -22,7 +22,7 @@ env:
 
 jobs:
   build-and-test:
-    name: Build and test (.NET 10)
+    name: Build, unit and multi-Postgres integration tests (.NET 10)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -43,11 +43,14 @@ jobs:
       - name: Build solution
         run: dotnet build Saas.Identity.slnx --configuration Release --no-restore
 
-      - name: Run tests
-        run: dotnet test Saas.Identity.slnx --configuration Release --no-build --verbosity normal
+      - name: Run unit tests
+        run: dotnet test tests/Saas.Identity.UnitTests/Saas.Identity.UnitTests.csproj --configuration Release --no-build --verbosity normal
+
+      - name: Run multi-instance PostgreSQL integration tests (Testcontainers)
+        run: dotnet test tests/Saas.Identity.IntegrationTests/Saas.Identity.IntegrationTests.csproj --configuration Release --no-build --verbosity normal
 
   docker-build:
-    name: Docker build and integration verification
+    name: Docker build and multi-DB integration verification
     runs-on: ubuntu-latest
     needs: build-and-test
     permissions:
@@ -69,37 +72,90 @@ jobs:
             --tag "${IMAGE_NAME}:${GITHUB_SHA}" \
             .
 
-      - name: Verify container health probes and Newman suite
+      - name: Verify container health probes, Newman suite and gRPC provisioning across 4 PostgreSQL instances
         run: |
           set -euo pipefail
+          DB_NAMES=(
+            "saas-identity-ci-global-db"
+            "saas-identity-ci-norte-db"
+            "saas-identity-ci-valle-db"
+            "saas-identity-ci-aurora-db"
+          )
+
           cleanup() {
             local status=$?
             if [ "${status}" -ne 0 ]; then
-              docker logs saas-identity-ci || true
+              if docker ps -a --format '{{.Names}}' | grep -qx 'saas-identity-ci'; then
+                echo "=== saas-identity-ci logs ==="
+                docker logs saas-identity-ci || true
+              fi
+              for db in "${DB_NAMES[@]}"; do
+                if docker ps -a --format '{{.Names}}' | grep -qx "${db}"; then
+                  echo "=== ${db} logs ==="
+                  docker logs "${db}" || true
+                fi
+              done
             fi
-            docker rm -f saas-identity-ci saas-identity-ci-db >/dev/null 2>&1 || true
+            docker rm -f saas-identity-ci "${DB_NAMES[@]}" >/dev/null 2>&1 || true
             docker network rm saas-identity-ci-net >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
 
+          GLOBAL_PASS=$(openssl rand -hex 16)
+          NORTE_PASS=$(openssl rand -hex 16)
+          VALLE_PASS=$(openssl rand -hex 16)
+          AURORA_PASS=$(openssl rand -hex 16)
+          CI_JWT_KEY=$(openssl rand -hex 32)
+          CI_GRPC_KEY=$(openssl rand -hex 24)
+
           docker network create saas-identity-ci-net
-          docker run -d --rm \
-            --name saas-identity-ci-db \
-            --network saas-identity-ci-net \
-            -e POSTGRES_DB=vital_identity \
-            -e POSTGRES_USER=vital_identity \
-            -e POSTGRES_PASSWORD=vital_identity_ci_pass \
-            postgres:17-alpine
 
-          for i in $(seq 1 30); do
-            if docker exec saas-identity-ci-db pg_isready -U vital_identity -d vital_identity >/dev/null 2>&1; then
-              break
+          start_pg() {
+            local name="$1"
+            local db="$2"
+            local user="$3"
+            local pass="$4"
+            docker run -d \
+              --name "${name}" \
+              --network saas-identity-ci-net \
+              -e "POSTGRES_DB=${db}" \
+              -e "POSTGRES_USER=${user}" \
+              -e "POSTGRES_PASSWORD=${pass}" \
+              postgres:17-alpine
+          }
+
+          wait_pg() {
+            local name="$1"
+            local db="$2"
+            local user="$3"
+            local pass="$4"
+            local ready=0
+            for i in $(seq 1 45); do
+              if docker exec "${name}" pg_isready -h 127.0.0.1 -p 5432 -U "${user}" -d "${db}" >/dev/null 2>&1 && \
+                 docker exec -e "PGPASSWORD=${pass}" "${name}" psql -h 127.0.0.1 -p 5432 -U "${user}" -d "${db}" -tAc "SELECT 1" 2>/dev/null | grep -qx 1; then
+                ready=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "${ready}" -ne 1 ]; then
+              echo "PostgreSQL container ${name} did not become ready on TCP 5432 within 45s"
+              exit 1
             fi
-            sleep 1
-          done
-          docker exec saas-identity-ci-db pg_isready -U vital_identity -d vital_identity
+            docker exec "${name}" pg_isready -h 127.0.0.1 -p 5432 -U "${user}" -d "${db}"
+          }
 
-          docker run -d --rm \
+          start_pg "saas-identity-ci-global-db" "vital_identity_global" "vital_identity_global" "${GLOBAL_PASS}"
+          start_pg "saas-identity-ci-norte-db"  "vital_identity_norte"  "vital_identity_norte"  "${NORTE_PASS}"
+          start_pg "saas-identity-ci-valle-db"  "vital_identity_valle"  "vital_identity_valle"  "${VALLE_PASS}"
+          start_pg "saas-identity-ci-aurora-db" "vital_identity_aurora" "vital_identity_aurora" "${AURORA_PASS}"
+
+          wait_pg "saas-identity-ci-global-db" "vital_identity_global" "vital_identity_global" "${GLOBAL_PASS}"
+          wait_pg "saas-identity-ci-norte-db"  "vital_identity_norte"  "vital_identity_norte"  "${NORTE_PASS}"
+          wait_pg "saas-identity-ci-valle-db"  "vital_identity_valle"  "vital_identity_valle"  "${VALLE_PASS}"
+          wait_pg "saas-identity-ci-aurora-db" "vital_identity_aurora" "vital_identity_aurora" "${AURORA_PASS}"
+
+          docker run -d \
             --name saas-identity-ci \
             --network saas-identity-ci-net \
             --cap-drop=ALL \
@@ -107,25 +163,39 @@ jobs:
             -p 127.0.0.1:8080:8080 \
             -p 127.0.0.1:8082:8082 \
             -e ASPNETCORE_ENVIRONMENT=Development \
-            -e ConnectionStrings__IdentityDb="Host=saas-identity-ci-db;Port=5432;Database=vital_identity;Username=vital_identity;Password=vital_identity_ci_pass" \
+            -e ConnectionStrings__IdentityGlobalDb="Host=saas-identity-ci-global-db;Port=5432;Database=vital_identity_global;Username=vital_identity_global;Password=${GLOBAL_PASS}" \
+            -e TenantDatabases__Connections__10000000-0000-0000-0000-000000000001="Host=saas-identity-ci-norte-db;Port=5432;Database=vital_identity_norte;Username=vital_identity_norte;Password=${NORTE_PASS}" \
+            -e TenantDatabases__Connections__10000000-0000-0000-0000-000000000002="Host=saas-identity-ci-valle-db;Port=5432;Database=vital_identity_valle;Username=vital_identity_valle;Password=${VALLE_PASS}" \
+            -e TenantDatabases__Connections__10000000-0000-0000-0000-000000000003="Host=saas-identity-ci-aurora-db;Port=5432;Database=vital_identity_aurora;Username=vital_identity_aurora;Password=${AURORA_PASS}" \
             -e Jwt__Issuer=saas-identity \
             -e Jwt__Audience=vital-saas \
-            -e Jwt__SigningKey="VitalIdentityDevSigningKeyChangeInProd2026!" \
+            -e Jwt__SigningKey="${CI_JWT_KEY}" \
             -e Ports__Http=8080 \
             -e Ports__Grpc=8082 \
-            -e InternalGrpc__ApiKey="VitalInternalGrpcDevKey2026!" \
+            -e InternalGrpc__ApiKey="${CI_GRPC_KEY}" \
             -e Email__Mode=LogOnly \
             -e Platform__Mode=Local \
             -e SeedDemoData=true \
+            -e DemoSeed__Password="Vital2026!" \
             -e OpenApi__Enabled=true \
             "${IMAGE_NAME}:${GITHUB_SHA}"
 
+          api_ready=0
           for i in $(seq 1 45); do
+            if [ "$(docker inspect -f '{{.State.Running}}' saas-identity-ci 2>/dev/null || echo false)" != "true" ]; then
+              echo "saas-identity-ci exited unexpectedly during startup"
+              exit 1
+            fi
             if curl -fsS http://127.0.0.1:8080/health/ready >/dev/null 2>&1; then
+              api_ready=1
               break
             fi
             sleep 1
           done
+          if [ "${api_ready}" -ne 1 ]; then
+            echo "saas-identity-ci did not pass /health/ready within 45s"
+            exit 1
+          fi
 
           curl -fsS http://127.0.0.1:8080/health/live
           echo ""
@@ -141,6 +211,14 @@ jobs:
             postman/newman:alpine \
             run /etc/newman/Vital.Identity.postman_collection.json \
             --env-var "baseUrl=http://saas-identity-ci:8080"
+
+          docker run --rm \
+            --network saas-identity-ci-net \
+            fullstorydev/grpcurl:latest \
+            -plaintext \
+            -H "x-internal-service-key: ${CI_GRPC_KEY}" \
+            -d '{"tenant_id":"10000000-0000-0000-0000-000000000003","provisioning_request_id":"prov-ci-aurora-001","clinic_slug":"clinica-aurora","clinic_name":"Unidad Clinica Aurora","admin_full_name":"Mtro. Ernesto Cardenas","admin_email":"admin@aurora.vital.demo"}' \
+            saas-identity-ci:8082 vital.platform_identity.v1.IdentityProvisioningService/ProvisionInitialClinicAdmin
 
       - name: Save validated image artifact (main push only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Saas.Identity.Domain.Entities;
+using Saas.Identity.Infrastructure.Persistence.Configurations;
 
 namespace Saas.Identity.Infrastructure.Persistence;
 
-public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> options)
+public sealed class TenantIdentityDbContext(DbContextOptions<TenantIdentityDbContext> options)
     : DbContext(options)
 {
     public DbSet<IdentityAccount> Accounts => Set<IdentityAccount>();
@@ -14,6 +15,9 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("identity");
-        modelBuilder.ApplyConfigurationsFromAssembly(typeof(IdentityDbContext).Assembly);
+        modelBuilder.ApplyConfiguration(new TenantIdentityAccountConfiguration());
+        modelBuilder.ApplyConfiguration(new TenantRefreshTokenSessionConfiguration());
+        modelBuilder.ApplyConfiguration(new RoleAuditEntryConfiguration());
+        modelBuilder.ApplyConfiguration(new ProvisioningRecordConfiguration());
     }
 }

@@ -8,10 +8,10 @@ using Saas.Identity.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace Saas.Identity.Infrastructure.Persistence.Migrations
+namespace Saas.Identity.Infrastructure.Persistence.Migrations.Global
 {
-    [DbContext(typeof(IdentityDbContext))]
-    partial class IdentityDbContextModelSnapshot : ModelSnapshot
+    [DbContext(typeof(GlobalIdentityDbContext))]
+    partial class GlobalIdentityDbContextModelSnapshot : ModelSnapshot
     {
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
@@ -102,105 +102,12 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("NormalizedEmail")
                         .IsUnique()
-                        .HasDatabaseName("ux_accounts_platform_email")
-                        .HasFilter("tenant_id IS NULL");
+                        .HasDatabaseName("ux_accounts_platform_email");
 
-                    b.HasIndex("TenantId", "NormalizedEmail")
-                        .IsUnique()
-                        .HasDatabaseName("ux_accounts_tenant_email")
-                        .HasFilter("tenant_id IS NOT NULL");
-
-                    b.ToTable("accounts", "identity");
-                });
-
-            modelBuilder.Entity("Saas.Identity.Domain.Entities.ProvisioningRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("AdminEmail")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("admin_email");
-
-                    b.Property<string>("AdminFullName")
-                        .IsRequired()
-                        .HasMaxLength(160)
-                        .HasColumnType("character varying(160)")
-                        .HasColumnName("admin_full_name");
-
-                    b.Property<string>("ClinicName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("clinic_name");
-
-                    b.Property<string>("ClinicSlug")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)")
-                        .HasColumnName("clinic_slug");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<Guid?>("InitialAdminAccountId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("initial_admin_account_id");
-
-                    b.Property<string>("LastErrorCode")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("last_error_code");
-
-                    b.Property<string>("NormalizedAdminEmail")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("normalized_admin_email");
-
-                    b.Property<string>("ProvisioningRequestId")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("provisioning_request_id");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("status");
-
-                    b.Property<bool>("TemporaryPasswordEmailSent")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false)
-                        .HasColumnName("temporary_password_email_sent");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("tenant_id");
-
-                    b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at_utc");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("InitialAdminAccountId");
-
-                    b.HasIndex("ProvisioningRequestId")
-                        .IsUnique()
-                        .HasDatabaseName("ux_provisioning_records_request_id");
-
-                    b.HasIndex("TenantId")
-                        .HasDatabaseName("ix_provisioning_records_tenant_id");
-
-                    b.ToTable("provisioning_records", "identity");
+                    b.ToTable("accounts", "identity", t =>
+                        {
+                            t.HasCheckConstraint("ck_global_accounts_tenant_null", "tenant_id IS NULL AND role = 'SUPER_ADMIN'");
+                        });
                 });
 
             modelBuilder.Entity("Saas.Identity.Domain.Entities.RefreshTokenSession", b =>
@@ -254,73 +161,10 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
                     b.HasIndex("AccountId", "RevokedAtUtc")
                         .HasDatabaseName("ix_refresh_tokens_account_revoked");
 
-                    b.ToTable("refresh_tokens", "identity");
-                });
-
-            modelBuilder.Entity("Saas.Identity.Domain.Entities.RoleAuditEntry", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<Guid>("AccountId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("account_id");
-
-                    b.Property<Guid>("ActorAccountId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("actor_account_id");
-
-                    b.Property<string>("ActorName")
-                        .IsRequired()
-                        .HasMaxLength(160)
-                        .HasColumnType("character varying(160)")
-                        .HasColumnName("actor_name");
-
-                    b.Property<bool>("NextCanPrescribe")
-                        .HasColumnType("boolean")
-                        .HasColumnName("next_can_prescribe");
-
-                    b.Property<string>("NextRole")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("next_role");
-
-                    b.Property<string>("Note")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
-                        .HasColumnName("note");
-
-                    b.Property<DateTimeOffset>("OccurredAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("occurred_at_utc");
-
-                    b.Property<bool>("PreviousCanPrescribe")
-                        .HasColumnType("boolean")
-                        .HasColumnName("previous_can_prescribe");
-
-                    b.Property<string>("PreviousRole")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("previous_role");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("tenant_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId")
-                        .HasDatabaseName("ix_role_audit_tenant");
-
-                    b.HasIndex("AccountId", "OccurredAtUtc")
-                        .HasDatabaseName("ix_role_audit_account_occurred");
-
-                    b.ToTable("role_audit_entries", "identity");
+                    b.ToTable("refresh_tokens", "identity", t =>
+                        {
+                            t.HasCheckConstraint("ck_global_refresh_tokens_tenant_null", "tenant_id IS NULL");
+                        });
                 });
 
             modelBuilder.Entity("Saas.Identity.Domain.Entities.IdentityAccount", b =>
@@ -391,24 +235,7 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
                     b.Navigation("ProfessionalAttribution");
                 });
 
-            modelBuilder.Entity("Saas.Identity.Domain.Entities.ProvisioningRecord", b =>
-                {
-                    b.HasOne("Saas.Identity.Domain.Entities.IdentityAccount", null)
-                        .WithMany()
-                        .HasForeignKey("InitialAdminAccountId")
-                        .OnDelete(DeleteBehavior.SetNull);
-                });
-
             modelBuilder.Entity("Saas.Identity.Domain.Entities.RefreshTokenSession", b =>
-                {
-                    b.HasOne("Saas.Identity.Domain.Entities.IdentityAccount", null)
-                        .WithMany()
-                        .HasForeignKey("AccountId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Saas.Identity.Domain.Entities.RoleAuditEntry", b =>
                 {
                     b.HasOne("Saas.Identity.Domain.Entities.IdentityAccount", null)
                         .WithMany()

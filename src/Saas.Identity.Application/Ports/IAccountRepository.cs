@@ -1,4 +1,5 @@
 using Saas.Identity.Domain.Entities;
+using Saas.Identity.Domain.ValueObjects;
 
 namespace Saas.Identity.Application.Ports;
 
@@ -14,6 +15,7 @@ public interface IAccountRepository
         CancellationToken cancellationToken = default);
 
     Task<IdentityAccount?> FindByIdAsync(
+        IdentityStoreScope scope,
         Guid accountId,
         CancellationToken cancellationToken = default);
 
@@ -26,6 +28,7 @@ public interface IAccountRepository
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<RoleAuditEntry>> ListRoleAuditForAccountAsync(
+        Guid tenantId,
         Guid accountId,
         CancellationToken cancellationToken = default);
 
@@ -38,14 +41,17 @@ public interface IAccountRepository
         CancellationToken cancellationToken = default);
 
     Task AddAsync(
+        IdentityStoreScope scope,
         IdentityAccount account,
         CancellationToken cancellationToken = default);
 
     Task UpdateAsync(
+        IdentityStoreScope scope,
         IdentityAccount account,
         CancellationToken cancellationToken = default);
 
     Task UpdateWithRoleAuditAsync(
+        Guid tenantId,
         IdentityAccount account,
         RoleAuditEntry auditEntry,
         CancellationToken cancellationToken = default);

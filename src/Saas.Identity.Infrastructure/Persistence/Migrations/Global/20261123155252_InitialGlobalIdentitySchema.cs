@@ -3,10 +3,10 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace Saas.Identity.Infrastructure.Persistence.Migrations
+namespace Saas.Identity.Infrastructure.Persistence.Migrations.Global
 {
     /// <inheritdoc />
-    public partial class InitialIdentitySchema : Migration
+    public partial class InitialGlobalIdentitySchema : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -44,6 +44,7 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_accounts", x => x.id);
+                    table.CheckConstraint("ck_global_accounts_tenant_null", "tenant_id IS NULL AND role = 'SUPER_ADMIN'");
                 });
 
             migrationBuilder.CreateTable(
@@ -64,37 +65,9 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_refresh_tokens", x => x.id);
+                    table.CheckConstraint("ck_global_refresh_tokens_tenant_null", "tenant_id IS NULL");
                     table.ForeignKey(
                         name: "FK_refresh_tokens_accounts_account_id",
-                        column: x => x.account_id,
-                        principalSchema: "identity",
-                        principalTable: "accounts",
-                        principalColumn: "id",
-                        onDelete: ReferentialAction.Cascade);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "role_audit_entries",
-                schema: "identity",
-                columns: table => new
-                {
-                    id = table.Column<Guid>(type: "uuid", nullable: false),
-                    tenant_id = table.Column<Guid>(type: "uuid", nullable: false),
-                    account_id = table.Column<Guid>(type: "uuid", nullable: false),
-                    previous_role = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
-                    next_role = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
-                    previous_can_prescribe = table.Column<bool>(type: "boolean", nullable: false),
-                    next_can_prescribe = table.Column<bool>(type: "boolean", nullable: false),
-                    actor_account_id = table.Column<Guid>(type: "uuid", nullable: false),
-                    actor_name = table.Column<string>(type: "character varying(160)", maxLength: 160, nullable: false),
-                    occurred_at_utc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
-                    note = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_role_audit_entries", x => x.id);
-                    table.ForeignKey(
-                        name: "FK_role_audit_entries_accounts_account_id",
                         column: x => x.account_id,
                         principalSchema: "identity",
                         principalTable: "accounts",
@@ -107,16 +80,7 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
                 schema: "identity",
                 table: "accounts",
                 column: "normalized_email",
-                unique: true,
-                filter: "tenant_id IS NULL");
-
-            migrationBuilder.CreateIndex(
-                name: "ux_accounts_tenant_email",
-                schema: "identity",
-                table: "accounts",
-                columns: new[] { "tenant_id", "normalized_email" },
-                unique: true,
-                filter: "tenant_id IS NOT NULL");
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "ix_refresh_tokens_account_revoked",
@@ -130,18 +94,6 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
                 table: "refresh_tokens",
                 column: "token_hash",
                 unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "ix_role_audit_account_occurred",
-                schema: "identity",
-                table: "role_audit_entries",
-                columns: new[] { "account_id", "occurred_at_utc" });
-
-            migrationBuilder.CreateIndex(
-                name: "ix_role_audit_tenant",
-                schema: "identity",
-                table: "role_audit_entries",
-                column: "tenant_id");
         }
 
         /// <inheritdoc />
@@ -149,10 +101,6 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
         {
             migrationBuilder.DropTable(
                 name: "refresh_tokens",
-                schema: "identity");
-
-            migrationBuilder.DropTable(
-                name: "role_audit_entries",
                 schema: "identity");
 
             migrationBuilder.DropTable(

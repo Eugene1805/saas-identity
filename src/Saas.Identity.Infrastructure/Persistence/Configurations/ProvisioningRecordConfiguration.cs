@@ -31,7 +31,8 @@ internal sealed class ProvisioningRecordConfiguration : IEntityTypeConfiguration
             .HasDatabaseName("ux_provisioning_records_request_id");
 
         builder.HasIndex(p => p.TenantId)
-            .HasDatabaseName("ix_provisioning_records_tenant_id");
+            .IsUnique()
+            .HasDatabaseName("ux_provisioning_records_tenant_id");
 
         builder.HasOne<IdentityAccount>()
             .WithMany()

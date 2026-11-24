@@ -9,11 +9,11 @@ using Saas.Identity.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace Saas.Identity.Infrastructure.Persistence.Migrations
+namespace Saas.Identity.Infrastructure.Persistence.Migrations.Tenant
 {
-    [DbContext(typeof(IdentityDbContext))]
-    [Migration("20261121192840_AddProvisioningRecords")]
-    partial class AddProvisioningRecords
+    [DbContext(typeof(TenantIdentityDbContext))]
+    [Migration("20261123155311_InitialTenantIdentitySchema")]
+    partial class InitialTenantIdentitySchema
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -92,7 +92,7 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(120)")
                         .HasColumnName("specialty");
 
-                    b.Property<Guid?>("TenantId")
+                    b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -103,17 +103,14 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("NormalizedEmail")
-                        .IsUnique()
-                        .HasDatabaseName("ux_accounts_platform_email")
-                        .HasFilter("tenant_id IS NULL");
-
                     b.HasIndex("TenantId", "NormalizedEmail")
                         .IsUnique()
-                        .HasDatabaseName("ux_accounts_tenant_email")
-                        .HasFilter("tenant_id IS NOT NULL");
+                        .HasDatabaseName("ux_accounts_tenant_email");
 
-                    b.ToTable("accounts", "identity");
+                    b.ToTable("accounts", "identity", t =>
+                        {
+                            t.HasCheckConstraint("ck_tenant_accounts_scoped", "tenant_id IS NOT NULL AND role <> 'SUPER_ADMIN'");
+                        });
                 });
 
             modelBuilder.Entity("Saas.Identity.Domain.Entities.ProvisioningRecord", b =>
@@ -201,7 +198,8 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ux_provisioning_records_request_id");
 
                     b.HasIndex("TenantId")
-                        .HasDatabaseName("ix_provisioning_records_tenant_id");
+                        .IsUnique()
+                        .HasDatabaseName("ux_provisioning_records_tenant_id");
 
                     b.ToTable("provisioning_records", "identity");
                 });
@@ -238,7 +236,7 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("revoked_at_utc");
 
-                    b.Property<Guid?>("TenantId")
+                    b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -257,7 +255,10 @@ namespace Saas.Identity.Infrastructure.Persistence.Migrations
                     b.HasIndex("AccountId", "RevokedAtUtc")
                         .HasDatabaseName("ix_refresh_tokens_account_revoked");
 
-                    b.ToTable("refresh_tokens", "identity");
+                    b.ToTable("refresh_tokens", "identity", t =>
+                        {
+                            t.HasCheckConstraint("ck_tenant_refresh_tokens_scoped", "tenant_id IS NOT NULL");
+                        });
                 });
 
             modelBuilder.Entity("Saas.Identity.Domain.Entities.RoleAuditEntry", b =>

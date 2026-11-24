@@ -46,6 +46,11 @@ public static class AuthenticationPolicy
         "El refresh token ha expirado; inicia sesión nuevamente.",
         401);
 
+    public static readonly DomainError TenantDatabaseUnavailable = new(
+        "TENANT_DATABASE_UNAVAILABLE",
+        "No fue posible acceder a la base de datos privada de identidad de la clínica.",
+        503);
+
     public static Result ValidateClinicLogin(
         TenantAccessState? tenant,
         bool platformUnavailable,

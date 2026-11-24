@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Saas.Identity.Domain.Common;
 using Saas.Identity.Infrastructure.Persistence;
 
@@ -29,11 +30,11 @@ internal static class HealthEndpoints
     public static void MapHealthEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/health", async (
-                IdentityDbContext dbContext,
+                IDbContextFactory<GlobalIdentityDbContext> dbContextFactory,
                 CancellationToken cancellationToken) =>
             {
                 var nowGmt6 = Gmt6Clock.FormatIsoGmt6(DateTimeOffset.UtcNow);
-                var canConnect = await TryCanConnectAsync(dbContext, cancellationToken);
+                var canConnect = await TryCanConnectAsync(dbContextFactory, cancellationToken);
 
                 if (!canConnect)
                 {
@@ -65,11 +66,11 @@ internal static class HealthEndpoints
             .Produces<LivenessHealthResponse>(StatusCodes.Status200OK);
 
         endpoints.MapGet("/health/ready", async (
-                IdentityDbContext dbContext,
+                IDbContextFactory<GlobalIdentityDbContext> dbContextFactory,
                 CancellationToken cancellationToken) =>
             {
                 var nowGmt6 = Gmt6Clock.FormatIsoGmt6(DateTimeOffset.UtcNow);
-                var canConnect = await TryCanConnectAsync(dbContext, cancellationToken);
+                var canConnect = await TryCanConnectAsync(dbContextFactory, cancellationToken);
 
                 if (!canConnect)
                 {
@@ -90,11 +91,12 @@ internal static class HealthEndpoints
     }
 
     private static async Task<bool> TryCanConnectAsync(
-        IdentityDbContext dbContext,
+        IDbContextFactory<GlobalIdentityDbContext> dbContextFactory,
         CancellationToken cancellationToken)
     {
         try
         {
+            await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
             return await dbContext.Database.CanConnectAsync(cancellationToken);
         }
         catch

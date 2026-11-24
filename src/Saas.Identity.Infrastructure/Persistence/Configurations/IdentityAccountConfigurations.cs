@@ -7,15 +7,13 @@ using Saas.Identity.Domain.Entities;
 
 namespace Saas.Identity.Infrastructure.Persistence.Configurations;
 
-internal sealed class IdentityAccountConfiguration : IEntityTypeConfiguration<IdentityAccount>
+internal static class IdentityAccountConfigurationHelper
 {
-    public void Configure(EntityTypeBuilder<IdentityAccount> builder)
+    public static void ConfigureCommon(EntityTypeBuilder<IdentityAccount> builder)
     {
-        builder.ToTable("accounts");
         builder.HasKey(a => a.Id);
 
         builder.Property(a => a.Id).HasColumnName("id");
-        builder.Property(a => a.TenantId).HasColumnName("tenant_id");
         builder.Property(a => a.FullName).HasColumnName("full_name").HasMaxLength(160).IsRequired();
         builder.Property(a => a.Email).HasColumnName("email").HasMaxLength(200).IsRequired();
         builder.Property(a => a.NormalizedEmail).HasColumnName("normalized_email").HasMaxLength(200).IsRequired();
@@ -59,15 +57,43 @@ internal sealed class IdentityAccountConfiguration : IEntityTypeConfiguration<Id
             .HasColumnName("linked_specialist_ids")
             .HasColumnType("jsonb")
             .HasConversion(linkedConverter, linkedComparer);
+    }
+}
 
-        builder.HasIndex(a => new { a.TenantId, a.NormalizedEmail })
-            .IsUnique()
-            .HasFilter("tenant_id IS NOT NULL")
-            .HasDatabaseName("ux_accounts_tenant_email");
+internal sealed class GlobalIdentityAccountConfiguration : IEntityTypeConfiguration<IdentityAccount>
+{
+    public void Configure(EntityTypeBuilder<IdentityAccount> builder)
+    {
+        builder.ToTable(
+            "accounts",
+            table => table.HasCheckConstraint(
+                "ck_global_accounts_tenant_null",
+                "tenant_id IS NULL AND role = 'SUPER_ADMIN'"));
+
+        builder.Property(a => a.TenantId).HasColumnName("tenant_id");
+        IdentityAccountConfigurationHelper.ConfigureCommon(builder);
 
         builder.HasIndex(a => a.NormalizedEmail)
             .IsUnique()
-            .HasFilter("tenant_id IS NULL")
             .HasDatabaseName("ux_accounts_platform_email");
+    }
+}
+
+internal sealed class TenantIdentityAccountConfiguration : IEntityTypeConfiguration<IdentityAccount>
+{
+    public void Configure(EntityTypeBuilder<IdentityAccount> builder)
+    {
+        builder.ToTable(
+            "accounts",
+            table => table.HasCheckConstraint(
+                "ck_tenant_accounts_scoped",
+                "tenant_id IS NOT NULL AND role <> 'SUPER_ADMIN'"));
+
+        builder.Property(a => a.TenantId).HasColumnName("tenant_id").IsRequired();
+        IdentityAccountConfigurationHelper.ConfigureCommon(builder);
+
+        builder.HasIndex(a => new { a.TenantId, a.NormalizedEmail })
+            .IsUnique()
+            .HasDatabaseName("ux_accounts_tenant_email");
     }
 }

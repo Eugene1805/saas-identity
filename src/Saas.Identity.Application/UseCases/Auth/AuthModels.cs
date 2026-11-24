@@ -21,6 +21,7 @@ public sealed record LogoutCommand(
     string RefreshToken);
 
 public sealed record ChangePasswordCommand(
+    IdentityStoreScope StoreScope,
     Guid AccountId,
     string CurrentPassword,
     string NewPassword);
@@ -93,7 +94,7 @@ internal static class SessionAssembler
         DateTimeOffset utcNow)
     {
         var issuedAccess = tokenIssuer.IssueAccessToken(account, utcNow);
-        var rawRefreshToken = tokenIssuer.GenerateRefreshToken();
+        var rawRefreshToken = tokenIssuer.GenerateRefreshToken(account.TenantId);
         var refreshHash = tokenIssuer.HashRefreshToken(rawRefreshToken);
         var refreshExpiresAtUtc = utcNow.AddDays(tokenIssuer.RefreshTokenLifetimeDays);
 

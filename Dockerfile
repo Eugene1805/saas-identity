@@ -7,6 +7,7 @@ COPY src/Saas.Identity.Application/Saas.Identity.Application.csproj src/Saas.Ide
 COPY src/Saas.Identity.Infrastructure/Saas.Identity.Infrastructure.csproj src/Saas.Identity.Infrastructure/
 COPY src/Saas.Identity.Api/Saas.Identity.Api.csproj src/Saas.Identity.Api/
 COPY tests/Saas.Identity.UnitTests/Saas.Identity.UnitTests.csproj tests/Saas.Identity.UnitTests/
+COPY tests/Saas.Identity.IntegrationTests/Saas.Identity.IntegrationTests.csproj tests/Saas.Identity.IntegrationTests/
 
 RUN dotnet restore Saas.Identity.slnx
 
@@ -17,7 +18,7 @@ COPY tests/ tests/
 RUN dotnet build Saas.Identity.slnx -c Release --no-restore
 
 FROM build AS test
-RUN dotnet test Saas.Identity.slnx -c Release --no-build --verbosity normal
+RUN dotnet test tests/Saas.Identity.UnitTests/Saas.Identity.UnitTests.csproj -c Release --no-build --verbosity normal
 
 FROM build AS publish
 RUN dotnet publish src/Saas.Identity.Api/Saas.Identity.Api.csproj -c Release --no-restore -o /app/publish /p:UseAppHost=false

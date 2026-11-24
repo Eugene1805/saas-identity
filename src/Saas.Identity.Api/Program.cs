@@ -3,7 +3,6 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.IdentityModel.Tokens;
-using Npgsql;
 using Saas.Identity.Api.Endpoints;
 using Saas.Identity.Api.Grpc;
 using Saas.Identity.Api.OpenApi;
@@ -32,6 +31,13 @@ if (string.IsNullOrWhiteSpace(jwtOptions.SigningKey) ||
     Encoding.UTF8.GetByteCount(jwtOptions.SigningKey) < 32)
 {
     throw new InvalidOperationException("Configura Jwt:SigningKey con al menos 32 bytes antes de iniciar saas-identity.");
+}
+
+var internalGrpcOptions = builder.Configuration.GetSection(InternalGrpcOptions.SectionName).Get<InternalGrpcOptions>() ?? new InternalGrpcOptions();
+if (string.IsNullOrWhiteSpace(internalGrpcOptions.ApiKey) ||
+    Encoding.UTF8.GetByteCount(internalGrpcOptions.ApiKey) < 16)
+{
+    throw new InvalidOperationException("Configura InternalGrpc:ApiKey con al menos 16 bytes antes de iniciar saas-identity.");
 }
 
 JwtSecurityTokenHandler.DefaultMapInboundClaims = false;
@@ -75,7 +81,7 @@ builder.Services.AddIdentityOpenApi();
 
 var app = builder.Build();
 
-await InitializeDatabaseWithRetryAsync(app.Services, app.Logger);
+await InitializeDatabaseWithRetryAsync(app.Services, app.Environment.IsProduction(), app.Logger);
 
 app.UseExceptionHandler();
 app.UseCors("VitalFrontend");
@@ -94,7 +100,10 @@ if (app.Environment.IsDevelopment() || app.Configuration.GetValue("OpenApi:Enabl
 
 app.Run();
 
-static async Task InitializeDatabaseWithRetryAsync(IServiceProvider services, ILogger logger)
+static async Task InitializeDatabaseWithRetryAsync(
+    IServiceProvider services,
+    bool isProduction,
+    ILogger logger)
 {
     const int maxAttempts = 10;
     for (var attempt = 1; attempt <= maxAttempts; attempt++)
@@ -103,10 +112,11 @@ static async Task InitializeDatabaseWithRetryAsync(IServiceProvider services, IL
         {
             using var scope = services.CreateScope();
             var initializer = scope.ServiceProvider.GetRequiredService<IdentityDbInitializer>();
-            await initializer.InitializeAsync();
+            await initializer.InitializeGlobalAsync(isProduction);
+            await initializer.InitializeConfiguredDemoTenantsAsync(isProduction);
             return;
         }
-        catch (Exception ex) when (ex is NpgsqlException or TimeoutException or InvalidOperationException && attempt < maxAttempts)
+        catch (Exception ex) when (ex is not OperationCanceledException && attempt < maxAttempts)
         {
             logger.LogWarning(
                 ex,
@@ -117,3 +127,5 @@ static async Task InitializeDatabaseWithRetryAsync(IServiceProvider services, IL
         }
     }
 }
+
+public partial class Program;
