@@ -10,17 +10,20 @@ using Saas.Identity.Domain.ValueObjects;
 
 namespace Saas.Identity.Infrastructure.Security;
 
-public sealed class JwtTokenIssuerAdapter(IOptions<JwtOptions> optionsAccessor) : ITokenIssuerPort
+public sealed class JwtTokenIssuerAdapter(JwtCryptoMaterial cryptoMaterial) : ITokenIssuerPort
 {
-    private readonly JwtOptions _options = optionsAccessor.Value;
+    private readonly JwtCryptoMaterial _cryptoMaterial = cryptoMaterial;
 
-    public int RefreshTokenLifetimeDays => Math.Max(1, _options.RefreshTokenDays);
+    public JwtTokenIssuerAdapter(IOptions<JwtOptions> optionsAccessor)
+        : this(JwtCryptoMaterial.Create(optionsAccessor.Value))
+    {
+    }
+
+    public int RefreshTokenLifetimeDays => _cryptoMaterial.RefreshTokenDays;
 
     public IssuedAccessToken IssueAccessToken(IdentityAccount account, DateTimeOffset utcNow)
     {
-        EnsureValidSigningKey();
-
-        var expiresAtUtc = utcNow.AddMinutes(Math.Max(1, _options.AccessTokenMinutes));
+        var expiresAtUtc = utcNow.AddMinutes(_cryptoMaterial.AccessTokenMinutes);
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, account.Id.ToString()),
@@ -36,16 +39,13 @@ public sealed class JwtTokenIssuerAdapter(IOptions<JwtOptions> optionsAccessor) 
             claims.Add(new Claim("tenant_id", tenantId.ToString()));
         }
 
-        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SigningKey));
-        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
-
         var descriptor = new JwtSecurityToken(
-            issuer: _options.Issuer,
-            audience: _options.Audience,
+            issuer: _cryptoMaterial.Issuer,
+            audience: _cryptoMaterial.Audience,
             claims: claims,
             notBefore: utcNow.UtcDateTime,
             expires: expiresAtUtc.UtcDateTime,
-            signingCredentials: credentials);
+            signingCredentials: _cryptoMaterial.SigningCredentials);
 
         var encodedToken = new JwtSecurityTokenHandler().WriteToken(descriptor);
         return new IssuedAccessToken(encodedToken, expiresAtUtc);
@@ -58,27 +58,26 @@ public sealed class JwtTokenIssuerAdapter(IOptions<JwtOptions> optionsAccessor) 
             throw new ArgumentException("El tenantId del refresh token no puede ser Guid.Empty.", nameof(tenantId));
         }
 
-        var macKey = DeriveRoutingMacKey();
         var randomPart = ToBase64Url(RandomNumberGenerator.GetBytes(32));
         var scopePayload = tenantId is Guid tid
             ? $"t.{tid:N}.{randomPart}"
             : $"g.{randomPart}";
 
-        var tagBytes = ComputeRoutingMacTag(macKey, scopePayload);
+        var tagBytes = ComputeRoutingMacTag(_cryptoMaterial.RefreshTokenRoutingMacKey, scopePayload);
         return $"rt.{scopePayload}.{ToBase64Url(tagBytes)}";
     }
 
     public bool TryResolveRefreshTokenScope(string rawRefreshToken, out IdentityStoreScope scope)
     {
         scope = default;
-        if (string.IsNullOrWhiteSpace(rawRefreshToken) || !HasValidSigningKey())
+        if (string.IsNullOrWhiteSpace(rawRefreshToken))
         {
             return false;
         }
 
         var trimmed = rawRefreshToken.Trim();
         var segments = trimmed.Split('.', StringSplitOptions.None);
-        var macKey = DeriveRoutingMacKey();
+        var macKey = _cryptoMaterial.RefreshTokenRoutingMacKey;
 
         if (segments.Length == 4 &&
             segments[0] == "rt" &&
@@ -132,29 +131,11 @@ public sealed class JwtTokenIssuerAdapter(IOptions<JwtOptions> optionsAccessor) 
         return Convert.ToHexStringLower(hashBytes);
     }
 
-    private bool HasValidSigningKey() =>
-        !string.IsNullOrWhiteSpace(_options.SigningKey) &&
-        Encoding.UTF8.GetByteCount(_options.SigningKey) >= 32;
-
-    private void EnsureValidSigningKey()
+    private static byte[] ComputeRoutingMacTag(ReadOnlySpan<byte> macKey, string payload)
     {
-        if (!HasValidSigningKey())
-        {
-            throw new InvalidOperationException("Jwt:SigningKey debe tener al menos 32 bytes.");
-        }
-    }
-
-    private byte[] DeriveRoutingMacKey()
-    {
-        EnsureValidSigningKey();
-        return SHA256.HashData(Encoding.UTF8.GetBytes($"vital-identity-rt-route-v1:{_options.SigningKey}"));
-    }
-
-    private static byte[] ComputeRoutingMacTag(byte[] macKey, string payload)
-    {
-        using var hmac = new HMACSHA256(macKey);
-        var fullMac = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
-        return fullMac.AsSpan(0, 16).ToArray();
+        Span<byte> fullMac = stackalloc byte[HMACSHA256.HashSizeInBytes];
+        HMACSHA256.HashData(macKey, Encoding.UTF8.GetBytes(payload), fullMac);
+        return fullMac[..16].ToArray();
     }
 
     private static string ToBase64Url(byte[] bytes) =>

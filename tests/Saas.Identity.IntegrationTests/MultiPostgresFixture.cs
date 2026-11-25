@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Testcontainers.PostgreSql;
@@ -17,8 +18,18 @@ public sealed class MultiPostgresFixture : IAsyncLifetime
     public const string ClinicRaceSlug = "clinica-carrera";
 
     public const string InternalGrpcKey = "IntegrationTestGrpcKey_32CharsMinimum!";
-    public const string JwtSigningKey = "IntegrationTestJwtSigningKey_AtLeast32Bytes!";
+    public const string RefreshTokenHmacKey = "IntegrationTestRefreshHmacKey_AtLeast32Bytes!";
     public const string SuperAdminPassword = "SuperAdminTestPass1!";
+
+    public static readonly string JwtPrivateKeyPem;
+    public static readonly string JwtPublicKeyPem;
+
+    static MultiPostgresFixture()
+    {
+        using var rsa = RSA.Create(2048);
+        JwtPrivateKeyPem = rsa.ExportPkcs8PrivateKeyPem();
+        JwtPublicKeyPem = rsa.ExportSubjectPublicKeyInfoPem();
+    }
 
     private readonly List<PostgreSqlContainer> _containers = [];
 
@@ -66,7 +77,9 @@ public sealed class MultiPostgresFixture : IAsyncLifetime
         TenantRaceDbConnectionString = tenantRaceContainer.GetConnectionString();
     }
 
-    public WebApplicationFactory<Program> CreateFactory(string? overrideGrpcApiKey = InternalGrpcKey)
+    public WebApplicationFactory<Program> CreateFactory(
+        string? overrideGrpcApiKey = InternalGrpcKey,
+        IDictionary<string, string?>? configOverrides = null)
     {
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -81,7 +94,9 @@ public sealed class MultiPostgresFixture : IAsyncLifetime
                 [$"TenantDatabases:Connections:{ClinicRaceId}"] = TenantRaceDbConnectionString,
                 ["Jwt:Issuer"] = "saas-identity",
                 ["Jwt:Audience"] = "vital-saas",
-                ["Jwt:SigningKey"] = JwtSigningKey,
+                ["Jwt:PrivateKeyPem"] = JwtPrivateKeyPem,
+                ["Jwt:PublicKeyPem"] = JwtPublicKeyPem,
+                ["Jwt:RefreshTokenHmacKey"] = RefreshTokenHmacKey,
                 ["InternalGrpc:ApiKey"] = overrideGrpcApiKey,
                 ["Email:Mode"] = "LogOnly",
                 ["Platform:Mode"] = "Local",
@@ -113,6 +128,14 @@ public sealed class MultiPostgresFixture : IAsyncLifetime
                 ["Platform:Tenants:3:State"] = "PENDIENTE_ADMIN",
                 ["Platform:Tenants:3:MaxActiveAccounts"] = "5",
             };
+
+            if (configOverrides is not null)
+            {
+                foreach (var kv in configOverrides)
+                {
+                    settings[kv.Key] = kv.Value;
+                }
+            }
 
             foreach (var kv in settings)
             {

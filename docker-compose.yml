@@ -89,7 +89,9 @@ services:
       TenantDatabases__Connections__10000000-0000-0000-0000-000000000003: Host=identity-aurora-db;Port=5432;Database=${POSTGRES_AURORA_DB:-vital_identity_aurora};Username=${POSTGRES_AURORA_USER:-vital_identity_aurora};Password=${POSTGRES_AURORA_PASSWORD:?Set POSTGRES_AURORA_PASSWORD in .env}
       Jwt__Issuer: saas-identity
       Jwt__Audience: vital-saas
-      Jwt__SigningKey: ${JWT_SIGNING_KEY:?Set JWT_SIGNING_KEY in .env}
+      Jwt__PrivateKeyPem: ${JWT_PRIVATE_KEY_PEM:?Set JWT_PRIVATE_KEY_PEM in .env}
+      Jwt__PublicKeyPem: ${JWT_PUBLIC_KEY_PEM:-}
+      Jwt__RefreshTokenHmacKey: ${JWT_REFRESH_TOKEN_HMAC_KEY:?Set JWT_REFRESH_TOKEN_HMAC_KEY in .env}
       Jwt__AccessTokenMinutes: 15
       Jwt__RefreshTokenDays: 7
       Ports__Http: 8080

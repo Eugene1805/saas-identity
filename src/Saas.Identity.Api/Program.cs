@@ -2,7 +2,6 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
-using Microsoft.IdentityModel.Tokens;
 using Saas.Identity.Api.Endpoints;
 using Saas.Identity.Api.Grpc;
 using Saas.Identity.Api.OpenApi;
@@ -26,13 +25,6 @@ builder.Services.Configure<InternalGrpcOptions>(
 builder.Services.AddGrpc();
 builder.Services.AddGrpcReflection();
 
-var jwtOptions = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
-if (string.IsNullOrWhiteSpace(jwtOptions.SigningKey) ||
-    Encoding.UTF8.GetByteCount(jwtOptions.SigningKey) < 32)
-{
-    throw new InvalidOperationException("Configura Jwt:SigningKey con al menos 32 bytes antes de iniciar saas-identity.");
-}
-
 var internalGrpcOptions = builder.Configuration.GetSection(InternalGrpcOptions.SectionName).Get<InternalGrpcOptions>() ?? new InternalGrpcOptions();
 if (string.IsNullOrWhiteSpace(internalGrpcOptions.ApiKey) ||
     Encoding.UTF8.GetByteCount(internalGrpcOptions.ApiKey) < 16)
@@ -44,21 +36,14 @@ JwtSecurityTokenHandler.DefaultMapInboundClaims = false;
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+    .AddJwtBearer();
+
+builder.Services
+    .AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<JwtCryptoMaterial>((options, cryptoMaterial) =>
     {
         options.MapInboundClaims = false;
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidIssuer = jwtOptions.Issuer,
-            ValidateAudience = true,
-            ValidAudience = jwtOptions.Audience,
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SigningKey)),
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.FromSeconds(30),
-            RoleClaimType = "role",
-        };
+        options.TokenValidationParameters = cryptoMaterial.CreateTokenValidationParameters();
     });
 
 builder.Services.AddAuthorization();

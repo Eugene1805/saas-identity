@@ -36,7 +36,18 @@ public static class DependencyInjection
                     .MigrationsHistoryTable("__EFMigrationsHistory", "identity")
                     .EnableRetryOnFailure()));
 
-        services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
+        var jwtSection = configuration.GetSection(JwtOptions.SectionName);
+        if (!string.IsNullOrWhiteSpace(jwtSection["SigningKey"]))
+        {
+            throw new InvalidOperationException(
+                "La configuración heredada Jwt:SigningKey (HS256) ya no es admitida. Configura Jwt:PrivateKeyPem (o Jwt:PrivateKeyPemPath) para RS256 y Jwt:RefreshTokenHmacKey para refresh tokens.");
+        }
+
+        services.Configure<JwtOptions>(jwtSection);
+        var jwtOptions = jwtSection.Get<JwtOptions>() ?? new JwtOptions();
+        var jwtCryptoMaterial = JwtCryptoMaterial.Create(jwtOptions);
+        services.AddSingleton(jwtCryptoMaterial);
+
         services.Configure<PlatformOptions>(configuration.GetSection(PlatformOptions.SectionName));
         services.Configure<EmailOptions>(configuration.GetSection(EmailOptions.SectionName));
         services.Configure<TenantDatabasesOptions>(configuration.GetSection(TenantDatabasesOptions.SectionName));
@@ -50,7 +61,8 @@ public static class DependencyInjection
         services.AddSingleton<IPasswordHasherPort, Pbkdf2PasswordHasherAdapter>();
         services.AddSingleton<ITemporaryPasswordGeneratorPort, TemporaryPasswordGeneratorAdapter>();
         services.AddSingleton<ITemporaryPasswordDeliveryPort, SmtpTemporaryPasswordDeliveryAdapter>();
-        services.AddSingleton<ITokenIssuerPort, JwtTokenIssuerAdapter>();
+        services.AddSingleton<ITokenIssuerPort>(sp =>
+            new JwtTokenIssuerAdapter(sp.GetRequiredService<JwtCryptoMaterial>()));
 
         services.AddScoped<IAccountRepository, EfAccountRepository>();
         services.AddScoped<IRefreshTokenRepository, EfRefreshTokenRepository>();
