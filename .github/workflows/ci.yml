@@ -98,6 +98,9 @@ jobs:
             fi
             docker rm -f saas-identity-ci "${DB_NAMES[@]}" >/dev/null 2>&1 || true
             docker network rm saas-identity-ci-net >/dev/null 2>&1 || true
+            if [ -n "${CI_KEY_DIR:-}" ] && [ -d "${CI_KEY_DIR}" ]; then
+              rm -rf "${CI_KEY_DIR}" || true
+            fi
           }
           trap cleanup EXIT
 
@@ -105,7 +108,12 @@ jobs:
           NORTE_PASS=$(openssl rand -hex 16)
           VALLE_PASS=$(openssl rand -hex 16)
           AURORA_PASS=$(openssl rand -hex 16)
-          CI_JWT_KEY=$(openssl rand -hex 32)
+          CI_KEY_DIR=$(mktemp -d)
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${CI_KEY_DIR}/jwt-private.pem" >/dev/null 2>&1
+          openssl pkey -in "${CI_KEY_DIR}/jwt-private.pem" -pubout -out "${CI_KEY_DIR}/jwt-public.pem" >/dev/null 2>&1
+          CI_JWT_PRIVATE_PEM=$(cat "${CI_KEY_DIR}/jwt-private.pem")
+          CI_JWT_PUBLIC_PEM=$(cat "${CI_KEY_DIR}/jwt-public.pem")
+          CI_REFRESH_HMAC_KEY=$(openssl rand -hex 32)
           CI_GRPC_KEY=$(openssl rand -hex 24)
 
           docker network create saas-identity-ci-net
@@ -169,7 +177,9 @@ jobs:
             -e TenantDatabases__Connections__10000000-0000-0000-0000-000000000003="Host=saas-identity-ci-aurora-db;Port=5432;Database=vital_identity_aurora;Username=vital_identity_aurora;Password=${AURORA_PASS}" \
             -e Jwt__Issuer=saas-identity \
             -e Jwt__Audience=vital-saas \
-            -e Jwt__SigningKey="${CI_JWT_KEY}" \
+            -e Jwt__PrivateKeyPem="${CI_JWT_PRIVATE_PEM}" \
+            -e Jwt__PublicKeyPem="${CI_JWT_PUBLIC_PEM}" \
+            -e Jwt__RefreshTokenHmacKey="${CI_REFRESH_HMAC_KEY}" \
             -e Ports__Http=8080 \
             -e Ports__Grpc=8082 \
             -e InternalGrpc__ApiKey="${CI_GRPC_KEY}" \

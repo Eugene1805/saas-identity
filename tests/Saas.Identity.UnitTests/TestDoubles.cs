@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Saas.Identity.Application.Ports;
 using Saas.Identity.Domain.Entities;
 using Saas.Identity.Domain.ValueObjects;
@@ -382,13 +383,35 @@ internal sealed class InMemoryProvisioningRepo(InMemoryAccountRepo accounts) : I
 
 internal static class TestJwtHelper
 {
-    public static JwtTokenIssuerAdapter CreateJwtIssuer() =>
-        new(Microsoft.Extensions.Options.Options.Create(new JwtOptions
+    public const string RefreshTokenHmacKey = "TestRefreshTokenHmacKey_AtLeast32Bytes!";
+
+    public static string PrivateKeyPem { get; }
+    public static string PublicKeyPem { get; }
+
+    static TestJwtHelper()
+    {
+        using var rsa = RSA.Create(2048);
+        PrivateKeyPem = rsa.ExportPkcs8PrivateKeyPem();
+        PublicKeyPem = rsa.ExportSubjectPublicKeyInfoPem();
+    }
+
+    public static JwtOptions CreateJwtOptions(
+        string? privateKeyPem = null,
+        string? publicKeyPem = null,
+        string? refreshTokenHmacKey = null,
+        int accessTokenMinutes = 15,
+        int refreshTokenDays = 7) =>
+        new()
         {
             Issuer = "saas-identity",
             Audience = "vital-saas",
-            SigningKey = "TestSigningKeyWithMoreThan32BytesForHS256!",
-            AccessTokenMinutes = 15,
-            RefreshTokenDays = 7,
-        }));
+            PrivateKeyPem = privateKeyPem ?? PrivateKeyPem,
+            PublicKeyPem = publicKeyPem ?? PublicKeyPem,
+            RefreshTokenHmacKey = refreshTokenHmacKey ?? RefreshTokenHmacKey,
+            AccessTokenMinutes = accessTokenMinutes,
+            RefreshTokenDays = refreshTokenDays,
+        };
+
+    public static JwtTokenIssuerAdapter CreateJwtIssuer() =>
+        new(Microsoft.Extensions.Options.Options.Create(CreateJwtOptions()));
 }

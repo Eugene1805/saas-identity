@@ -22,7 +22,11 @@ Regla de dependencias: `Api -> Application -> Domain` y `Infrastructure -> Appli
 
 ## Arranque rápido con Docker Compose (4 instancias PostgreSQL 17)
 
-1. Copia `.env.example` a `.env` (no versionado) y asigna valores locales seguros (claves >= 32 bytes para `JWT_SIGNING_KEY`, >= 16 bytes para `INTERNAL_GRPC_API_KEY`, y contraseñas de BD):
+1. Copia `.env.example` a `.env` (no versionado) y asigna valores locales seguros:
+   - Clave privada RSA >= 2048 bits en formato PEM para `JWT_PRIVATE_KEY_PEM` (y opcionalmente `JWT_PUBLIC_KEY_PEM`).
+   - Secreto HMAC independiente >= 32 bytes para `JWT_REFRESH_TOKEN_HMAC_KEY`.
+   - Credencial >= 16 bytes para `INTERNAL_GRPC_API_KEY` y contraseñas de BD.
+   - Consulta el contrato transversal de firma RS256 en [`docs/IDENTITY-SEC-01-JWT-CONTRACT.md`](docs/IDENTITY-SEC-01-JWT-CONTRACT.md).
 
 ```powershell
 cd saas-identity

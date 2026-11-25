@@ -230,13 +230,112 @@
       }
     },
     {
+      "name": "07b. GET /v1/auth/me rechaza token HS256 (401)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "function b64url(str) {",
+              "  return CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(str))",
+              "    .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');",
+              "}",
+              "const now = Math.floor(Date.now() / 1000);",
+              "const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));",
+              "const payload = b64url(JSON.stringify({",
+              "  sub: '20000000-0000-0000-0000-000000000001',",
+              "  email: 'superadmin@vital.demo',",
+              "  jti: '00000000-0000-0000-0000-000000000001',",
+              "  iat: now,",
+              "  nbf: now,",
+              "  exp: now + 900,",
+              "  iss: 'saas-identity',",
+              "  aud: 'vital-saas',",
+              "  role: 'SUPER_ADMIN',",
+              "  full_name: 'Forjado HS256'",
+              "}));",
+              "const sig = CryptoJS.enc.Base64.stringify(",
+              "  CryptoJS.HmacSHA256(header + '.' + payload, 'forged-hs256-secret-at-least-32-bytes!')",
+              ").replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');",
+              "pm.collectionVariables.set('forgedHs256Token', header + '.' + payload + '.' + sig);"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Endpoint protegido rechaza JWT HS256 con 401', () => {",
+              "  pm.response.to.have.status(401);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{forgedHs256Token}}" }],
+        "url": "{{baseUrl}}/v1/auth/me"
+      }
+    },
+    {
+      "name": "07c. GET /v1/auth/me rechaza token sin firma alg:none (401)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "function b64url(str) {",
+              "  return CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(str))",
+              "    .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');",
+              "}",
+              "const now = Math.floor(Date.now() / 1000);",
+              "const header = b64url(JSON.stringify({ alg: 'none', typ: 'JWT' }));",
+              "const payload = b64url(JSON.stringify({",
+              "  sub: '20000000-0000-0000-0000-000000000001',",
+              "  email: 'superadmin@vital.demo',",
+              "  jti: '00000000-0000-0000-0000-000000000002',",
+              "  iat: now,",
+              "  nbf: now,",
+              "  exp: now + 900,",
+              "  iss: 'saas-identity',",
+              "  aud: 'vital-saas',",
+              "  role: 'SUPER_ADMIN',",
+              "  full_name: 'Sin Firma'",
+              "}));",
+              "pm.collectionVariables.set('unsignedAlgNoneToken', header + '.' + payload + '.');"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Endpoint protegido rechaza JWT sin firma con 401', () => {",
+              "  pm.response.to.have.status(401);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{unsignedAlgNoneToken}}" }],
+        "url": "{{baseUrl}}/v1/auth/me"
+      }
+    },
+    {
       "name": "08. CU-13: Login válido Dra. Mendoza en clinica-norte",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test('Login válido emite JWT Bearer, Refresh Token y fechas GMT-6', () => {",
+              "pm.test('Login válido emite JWT Bearer RS256, Refresh Token y fechas GMT-6', () => {",
               "  pm.response.to.have.status(200);",
               "  const body = pm.response.json();",
               "  pm.expect(body.tokenType).to.eql('Bearer');",
@@ -245,6 +344,22 @@
               "  pm.expect(body.accessTokenExpiresAtGmt6).to.include('-06:00');",
               "  pm.expect(body.account.role).to.eql('ESPECIALISTA');",
               "  pm.expect(body.tenant.slug).to.eql('clinica-norte');",
+              "  const parts = body.accessToken.split('.');",
+              "  pm.expect(parts).to.have.lengthOf(3);",
+              "  const decodeB64Url = (s) => {",
+              "    let b = s.replace(/-/g, '+').replace(/_/g, '/');",
+              "    while (b.length % 4 !== 0) b += '=';",
+              "    return JSON.parse(CryptoJS.enc.Utf8.stringify(CryptoJS.enc.Base64.parse(b)));",
+              "  };",
+              "  const header = decodeB64Url(parts[0]);",
+              "  const payload = decodeB64Url(parts[1]);",
+              "  pm.expect(header.alg).to.eql('RS256');",
+              "  pm.expect(header.typ).to.eql('JWT');",
+              "  pm.expect(payload.iss).to.eql('saas-identity');",
+              "  pm.expect(payload.aud).to.eql('vital-saas');",
+              "  pm.expect(payload.role).to.eql('ESPECIALISTA');",
+              "  pm.expect(payload.tenant_id).to.eql(body.account.tenantId);",
+              "  pm.expect(payload.exp - payload.iat).to.eql(900);",
               "  pm.collectionVariables.set('accessToken', body.accessToken);",
               "  pm.collectionVariables.set('refreshToken1', body.refreshToken);",
               "});"
@@ -380,6 +495,18 @@
               "  const body = pm.response.json();",
               "  pm.expect(body.account.role).to.eql('SUPER_ADMIN');",
               "  pm.expect(body.account.tenantId).to.eql(null);",
+              "  const parts = body.accessToken.split('.');",
+              "  pm.expect(parts).to.have.lengthOf(3);",
+              "  const decodeB64Url = (s) => {",
+              "    let b = s.replace(/-/g, '+').replace(/_/g, '/');",
+              "    while (b.length % 4 !== 0) b += '=';",
+              "    return JSON.parse(CryptoJS.enc.Utf8.stringify(CryptoJS.enc.Base64.parse(b)));",
+              "  };",
+              "  const header = decodeB64Url(parts[0]);",
+              "  const payload = decodeB64Url(parts[1]);",
+              "  pm.expect(header.alg).to.eql('RS256');",
+              "  pm.expect(payload.role).to.eql('SUPER_ADMIN');",
+              "  pm.expect(payload).to.not.have.property('tenant_id');",
               "  pm.collectionVariables.set('platformRefresh', body.refreshToken);",
               "});"
             ],
